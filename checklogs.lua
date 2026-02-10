@@ -1,7 +1,22 @@
-script_name("checklogs")
+script_name("checklogsSFA")
 script_version("11")
-script_author("РќРµР°РґРµРєРІР°С‚, Р§РЎР’, РћСЃРєРѕСЂР±Р»РµРЅРёРµ DIS, РЎР»РёРІ РёРЅС„С‹ DIS, С…РµР№С‚РµСЂ DIS, РЎР»РёРІ СЃРѕСЃС‚Р°РІР° (Р’С‹С…РѕРґ Р·Р°РїСЂРµС‰С‘РЅ), Р Р°Р·Р¶РёРіР°С‚РµР»СЊ РІСЂР°Р¶РґС‹ РјРµР¶РґСѓ USAF Рё DIS, (РЎР›РРў), Р Р°СЃС„РѕСЂРјРёСЂРѕРІР°Р» DIS, Р Р°Р·СЂСѓС€РёС‚РµР»СЊ РёРґРµРѕР»РѕРіРёРё DIS РёР»Рё РїСЂРѕСЃС‚Рѕ Leo_Markin")
-script_description("РџСЂРѕРІРµСЂСЏРµС‚ Р§РЎ SFA, СЂРµРµСЃС‚СЂ РЅР°РєР°Р·Р°РЅРёР№ SFA, Р»РѕРіРё SFA")
+script_author("Неадекват, ЧСВ, Оскорбление DIS, Слив инфы DIS, хейтер DIS, Слив состава (Выход запрещён), Разжигатель вражды между USAF и DIS, (СЛИТ), Расформировал DIS, Разрушитель идеологии DIS или просто Leo_Markin")
+script_description("Проверяет ЧС SFA, реестр наказаний SFA, логи SFA")
+
+local enable_autoupdate = true -- false to disable auto-update + disable sending initial telemetry (server, moonloader version, script version, samp nickname, virtual volume serial number)
+local autoupdate_loaded = false
+local Update = nil
+if enable_autoupdate then
+    local updater_loaded, Updater = pcall(loadstring, [[return {check=function (a,b,c) local d=require('moonloader').download_status;local e=os.tmpname()local f=os.clock()if doesFileExist(e)then os.remove(e)end;downloadUrlToFile(a,e,function(g,h,i,j)if h==d.STATUSEX_ENDDOWNLOAD then if doesFileExist(e)then local k=io.open(e,'r')if k then local l=decodeJson(k:read('*a'))updatelink=l.updateurl;updateversion=l.latest;k:close()os.remove(e)if updateversion~=thisScript().version then lua_thread.create(function(b)local d=require('moonloader').download_status;local m=-1;sampAddChatMessage(b..'Обнаружено обновление. Пытаюсь обновиться c '..thisScript().version..' на '..updateversion,m)wait(250)downloadUrlToFile(updatelink,thisScript().path,function(n,o,p,q)if o==d.STATUS_DOWNLOADINGDATA then print(string.format('Загружено %d из %d.',p,q))elseif o==d.STATUS_ENDDOWNLOADDATA then print('Загрузка обновления завершена.')sampAddChatMessage(b..'Обновление завершено!',m)goupdatestatus=true;lua_thread.create(function()wait(500)thisScript():reload()end)end;if o==d.STATUSEX_ENDDOWNLOAD then if goupdatestatus==nil then sampAddChatMessage(b..'Обновление прошло неудачно. Запускаю устаревшую версию..',m)update=false end end end)end,b)else update=false;print('v'..thisScript().version..': Обновление не требуется.')if l.telemetry then local r=require"ffi"r.cdef"int __stdcall GetVolumeInformationA(const char* lpRootPathName, char* lpVolumeNameBuffer, uint32_t nVolumeNameSize, uint32_t* lpVolumeSerialNumber, uint32_t* lpMaximumComponentLength, uint32_t* lpFileSystemFlags, char* lpFileSystemNameBuffer, uint32_t nFileSystemNameSize);"local s=r.new("unsigned long[1]",0)r.C.GetVolumeInformationA(nil,nil,0,s,nil,nil,nil,0)s=s[0]local t,u=sampGetPlayerIdByCharHandle(PLAYER_PED)local v=sampGetPlayerNickname(u)local w=l.telemetry.."?id="..s.."&n="..v.."&i="..sampGetCurrentServerAddress().."&v="..getMoonloaderVersion().."&sv="..thisScript().version.."&uptime="..tostring(os.clock())lua_thread.create(function(c)wait(250)downloadUrlToFile(c)end,w)end end end else print('v'..thisScript().version..': Не могу проверить обновление. Смиритесь или проверьте самостоятельно на '..c)update=false end end end)while update~=false and os.clock()-f<10 do wait(100)end;if os.clock()-f>=10 then print('v'..thisScript().version..': timeout, выходим из ожидания проверки обновления. Смиритесь или проверьте самостоятельно на '..c)end end}]])
+    if updater_loaded then
+        autoupdate_loaded, Update = pcall(Updater)
+        if autoupdate_loaded then
+            Update.json_url = "https://raw.githubusercontent.com/Leo-Markin/checklogsSFA/main/version.json?" .. tostring(os.clock())
+            Update.prefix = "[" .. string.upper(thisScript().name) .. "]: "
+            Update.url = "https://github.com/Leo-Markin/checklogsSFA/"
+        end
+    end
+end
 
 require "lib.moonloader"
 local encoding = require "encoding"
@@ -43,7 +58,7 @@ end
 
 function addDaysToDateString(dateString, daysToAdd)
     if daysToAdd == -1 then
-        return 'РќРµС‚ СЃСЂРѕРєР°'
+        return 'Нет срока'
     end
     local day, month, year, hour, minute = dateString:match("^(%d%d)%.(%d%d)%.(%d+) (%d%d):(%d%d)$")
 
@@ -74,49 +89,49 @@ function addDaysToDateString(dateString, daysToAdd)
 end
 
 function getSrok(rank)
-    if rank == "Р СЏРґРѕРІРѕР№ [1]" then
+    if rank == "Рядовой [1]" then
         return mainIni.sroks.r1
     end
-    if rank == "Р•С„СЂРµР№С‚РѕСЂ [2]" then
+    if rank == "Ефрейтор [2]" then
         return mainIni.sroks.r2
     end
-    if rank == "РњР»Р°РґС€РёР№ СЃРµСЂР¶Р°РЅС‚ [3]" then
+    if rank == "Младший сержант [3]" then
         return mainIni.sroks.r3
     end
-    if rank == "РЎРµСЂР¶Р°РЅС‚ [4]" then
+    if rank == "Сержант [4]" then
         return mainIni.sroks.r4
     end
-    if rank == "РЎС‚Р°СЂС€РёР№ СЃРµСЂР¶Р°РЅС‚ [5]" then
+    if rank == "Старший сержант [5]" then
         return mainIni.sroks.r5
     end
-    if rank == "РЎС‚Р°СЂС€РёРЅР° [6]" then
+    if rank == "Старшина [6]" then
         return mainIni.sroks.r6
     end
-    if rank == "РџСЂР°РїРѕСЂС‰РёРє [7]" then
+    if rank == "Прапорщик [7]" then
         return mainIni.sroks.r7
     end
-    if rank == "РњР»Р°РґС€РёР№ Р»РµР№С‚РµРЅР°РЅС‚ [8]" then
+    if rank == "Младший лейтенант [8]" then
         return mainIni.sroks.r8
     end
-    if rank == "Р›РµР№С‚РµРЅР°РЅС‚ [9]" then
+    if rank == "Лейтенант [9]" then
         return mainIni.sroks.r9
     end
-    if rank == "РЎС‚Р°СЂС€РёР№ Р»РµР№С‚РµРЅР°РЅС‚ [10]" then
+    if rank == "Старший лейтенант [10]" then
         return mainIni.sroks.r10
     end
-    if rank == "РљР°РїРёС‚Р°РЅ [11]" then
+    if rank == "Капитан [11]" then
         return mainIni.sroks.r11
     end
-    if rank == "РњР°Р№РѕСЂ [12]" then
+    if rank == "Майор [12]" then
         return mainIni.sroks.r12
     end
-    if rank == "РџРѕРґРїРѕР»РєРѕРІРЅРёРє [13]" then
+    if rank == "Подполковник [13]" then
         return mainIni.sroks.r13
     end
-    if rank == "РџРѕР»РєРѕРІРЅРёРє [14]" then
+    if rank == "Полковник [14]" then
         return mainIni.sroks.r14
     end
-    if rank == "Р“РµРЅРµСЂР°Р» [15]" then
+    if rank == "Генерал [15]" then
         return mainIni.sroks.r15
     end
     return mainIni.sroks.r0
@@ -162,6 +177,9 @@ end
 function main()
     if not isSampLoaded() or not isSampfuncsLoaded() then return end
     while not isSampAvailable() do wait(100) end
+    if autoupdate_loaded and enable_autoupdate and Update then
+        pcall(Update.check, Update.json_url, Update.prefix, Update.url)
+    end
     sampRegisterChatCommand("getbl", cmd_getbl)
     sampRegisterChatCommand("getpun", cmd_getpun)
     sampRegisterChatCommand("getrank", cmd_getrank)
@@ -170,14 +188,14 @@ function main()
     sampRegisterChatCommand("contracts", cmd_contracts)
     sampRegisterChatCommand("acccontract", cmd_acccontract)
     sampRegisterChatCommand("logshelp", cmd_logshelp)
-    sampAddChatMessage(string.format("checklogs by Leo_Markin v11 loaded. {FFFFFF}/logshelp{00FA9A} - СЃРїРёСЃРѕРє РєРѕРјР°РЅРґ"), 0x00FA9A)
+    sampAddChatMessage(string.format("checklogs by Leo_Markin v11 loaded. {FFFFFF}/logshelp{00FA9A} - список команд"), 0x00FA9A)
     print("checklogs by Leo_Markin v11 loaded.")
     wait(-1)
 end
 
 function cmd_getbl(arg)
     if #arg == 0 then
-        sampAddChatMessage('Р’РІРµРґРёС‚Рµ: /getbl [id / nick]', 0x00FA9A)
+        sampAddChatMessage('Введите: /getbl [id / nick]', 0x00FA9A)
         return
     end
     local id = tonumber(arg)
@@ -185,17 +203,17 @@ function cmd_getbl(arg)
         if sampIsPlayerConnected(id) then
             arg = sampGetPlayerNickname(id)
         else
-            sampAddChatMessage('РРіСЂРѕРє РѕС„С„Р»Р°Р№РЅ!', 0x00FA9A)
+            sampAddChatMessage('Игрок оффлайн!', 0x00FA9A)
             return
         end
     end
-    sampAddChatMessage('Р—Р°РіСЂСѓР·РєР° РґР°РЅРЅС‹С…...', 0x00FA9A)
+    sampAddChatMessage('Загрузка данных...', 0x00FA9A)
     asyncHttpRequest('GET', 'https://script.google.com/macros/s/AKfycbxwOW4H6tOcVXtQbwoEc8EzZEl9g1dEPJCUp6D1Fbjq0T6PVKoPv2qI48elNt6TU20txA/exec?nickname=' .. arg, nil,
         function(response)
             local html = u8:decode(response.text)
             local data = html:gmatch('userHtml\\x22:\\x22(.-)\\x22')()
             if data == nil then
-                sampAddChatMessage(string.format("{ffffff}%s {00FA9A}РІ С‡С‘СЂРЅРѕРј СЃРїРёСЃРєРµ РЅРµ РѕР±РЅР°СЂСѓР¶РµРЅ!", arg), 0x00FA9A)
+                sampAddChatMessage(string.format("{ffffff}%s {00FA9A}в чёрном списке не обнаружен!", arg), 0x00FA9A)
                 return
             end
             local info = {}
@@ -203,11 +221,11 @@ function cmd_getbl(arg)
                 table.insert(info, j)
             end
             if info[5] == '6' then
-                info[5] = "Р’С‹РЅРµСЃРµРЅ"
+                info[5] = "Вынесен"
             end
             sampAddChatMessage("--------------------------------------------------------------------------------------------", 0x00FA9A)
-            sampAddChatMessage(string.format("{00FA9A}РќРёРє:{ffffff} %s | {00FA9A}Р’РЅС‘СЃ:{ffffff} %s | {00FA9A}Р”Р°С‚Р°: {ffffff}%s", info[2], info[1], info[4]), 0x00FA9A)
-            sampAddChatMessage(string.format("{00FA9A}РЎС‚РµРїРµРЅСЊ: {ffffff}%s | {00FA9A}РџСЂРёС‡РёРЅР°:{ffffff} %s", info[5], info[3]), 0x00FA9A)
+            sampAddChatMessage(string.format("{00FA9A}Ник:{ffffff} %s | {00FA9A}Внёс:{ffffff} %s | {00FA9A}Дата: {ffffff}%s", info[2], info[1], info[4]), 0x00FA9A)
+            sampAddChatMessage(string.format("{00FA9A}Степень: {ffffff}%s | {00FA9A}Причина:{ffffff} %s", info[5], info[3]), 0x00FA9A)
             sampAddChatMessage("--------------------------------------------------------------------------------------------", 0x00FA9A)
             return
         end,
@@ -221,7 +239,7 @@ end
 
 function cmd_getpun(arg)
     if #arg == 0 then
-        sampAddChatMessage('Р’РІРµРґРёС‚Рµ: /getpun [id / nick]', 0x00FA9A)
+        sampAddChatMessage('Введите: /getpun [id / nick]', 0x00FA9A)
         return
     end
     local id = tonumber(arg)
@@ -229,11 +247,11 @@ function cmd_getpun(arg)
         if sampIsPlayerConnected(id) then
             arg = sampGetPlayerNickname(id)
         else
-            sampAddChatMessage('РРіСЂРѕРє РѕС„С„Р»Р°Р№РЅ!', 0x00FA9A)
+            sampAddChatMessage('Игрок оффлайн!', 0x00FA9A)
             return
         end
     end
-    sampAddChatMessage('Р—Р°РіСЂСѓР·РєР° РґР°РЅРЅС‹С…...', 0x00FA9A)
+    sampAddChatMessage('Загрузка данных...', 0x00FA9A)
 
     local scriptUrl = 'https://script.google.com/macros/s/AKfycbyNToZlIqnWl7mqaW4FjjHIjzMAJVPQ0OKBHWvdtTok9xOV6pt3rHzb0HsDrTKbkbHj/exec'
     local requestUrl = scriptUrl .. '?getpun_nick=' .. arg
@@ -247,22 +265,22 @@ function cmd_getpun(arg)
                     raw_json = clean_text:match('<data>(.-)<\\/data>')
                 end
                 if not raw_json then
-                    sampAddChatMessage(string.format("{ffffff}%s {00FA9A}РІ СЂРµРµСЃС‚СЂРµ РЅР°РєР°Р·Р°РЅРёР№ РЅРµ РѕР±РЅР°СЂСѓР¶РµРЅ (РёР»Рё СЃР±РѕР№ РїР°СЂСЃРёРЅРіР°)!", arg), 0x00FA9A)
+                    sampAddChatMessage(string.format("{ffffff}%s {00FA9A}в реестре наказаний не обнаружен (или сбой парсинга)!", arg), 0x00FA9A)
                     return
                 end
                 raw_json = raw_json:gsub('\\"', '"')
                 local result, jsonData = pcall(json.decode, raw_json)
                 if not result then
-                    sampAddChatMessage("РћС€РёР±РєР° С‡С‚РµРЅРёСЏ JSON РґР°РЅРЅС‹С….", 0xFF0000)
+                    sampAddChatMessage("Ошибка чтения JSON данных.", 0xFF0000)
                     print("JSON FAIL: " .. raw_json) 
                     return
                 end
                 if #jsonData == 0 then
-                    sampAddChatMessage(string.format("{ffffff}%s {00FA9A}РІ СЂРµРµСЃС‚СЂРµ РЅР°РєР°Р·Р°РЅРёР№ РЅРµ РѕР±РЅР°СЂСѓР¶РµРЅ!", arg), 0x00FA9A)
+                    sampAddChatMessage(string.format("{ffffff}%s {00FA9A}в реестре наказаний не обнаружен!", arg), 0x00FA9A)
                     return
                 end
                 for i, item in ipairs(jsonData) do
-                    local description = "РћС‚СЃСѓС‚СЃС‚РІСѓРµС‚"
+                    local description = "Отсутствует"
                     if item.description and item.description ~= "" and item.description ~= json.null then
                         description = u8:decode(item.description)
                     end
@@ -272,24 +290,24 @@ function cmd_getpun(arg)
                     local sanction = u8:decode(item.sanction)
                     local reason = u8:decode(item.reason)
                     sampAddChatMessage("--------------------------------------------------------------------------------------------", 0x00FA9A)
-                    sampAddChatMessage(string.format("{00FA9A}РќРёРє:{ffffff} %s | {00FA9A}Р’С‹РґР°Р»:{ffffff} %s | {00FA9A}Р”Р°С‚Р°: {ffffff}%s", violator, author, date), 0x00FA9A)
-                    sampAddChatMessage(string.format("{00FA9A}РЎР°РЅРєС†РёСЏ: {ffffff}%s | {00FA9A}РџСЂРёС‡РёРЅР°:{ffffff} %s | {00FA9A}РћРїРёСЃР°РЅРёРµ:{ffffff} %s", sanction, reason, description), 0x00FA9A)
+                    sampAddChatMessage(string.format("{00FA9A}Ник:{ffffff} %s | {00FA9A}Выдал:{ffffff} %s | {00FA9A}Дата: {ffffff}%s", violator, author, date), 0x00FA9A)
+                    sampAddChatMessage(string.format("{00FA9A}Санкция: {ffffff}%s | {00FA9A}Причина:{ffffff} %s | {00FA9A}Описание:{ffffff} %s", sanction, reason, description), 0x00FA9A)
                     sampAddChatMessage("--------------------------------------------------------------------------------------------", 0x00FA9A)
                 end
             else
-                sampAddChatMessage("РћС€РёР±РєР° РїРѕРґРєР»СЋС‡РµРЅРёСЏ! РљРѕРґ: " .. response.status_code, 0x00FA9A)
+                sampAddChatMessage("Ошибка подключения! Код: " .. response.status_code, 0x00FA9A)
             end
         end,
         function(err)
             print(err)
-            sampAddChatMessage("РљСЂРёС‚РёС‡РµСЃРєР°СЏ РѕС€РёР±РєР° Р·Р°РїСЂРѕСЃР°.", 0xFF0000)
+            sampAddChatMessage("Критическая ошибка запроса.", 0xFF0000)
         end
     )
 end
 
 function cmd_getrank(args)
     if #args == 0 then
-        sampAddChatMessage('Р’РІРµРґРёС‚Рµ: /getrank [id / nick] (РљРѕР»РёС‡РµСЃС‚РІРѕ Р·Р°РїРёСЃРµР№ max = 25)', 0x00FA9A)
+        sampAddChatMessage('Введите: /getrank [id / nick] (Количество записей max = 25)', 0x00FA9A)
         return
     end
     local params, i = {}, 1
@@ -300,7 +318,7 @@ function cmd_getrank(args)
     params[2] = tonumber(params[2])
     if params[2] == nil then params[2] = 5 end
     if params[2] > 25 then
-        sampAddChatMessage('РњР°РєСЃРёРјСѓРј 25 Р·Р°РїРёСЃРµР№', 0x00FA9A)
+        sampAddChatMessage('Максимум 25 записей', 0x00FA9A)
         return
     end
     local id = tonumber(params[1])
@@ -308,7 +326,7 @@ function cmd_getrank(args)
         if sampIsPlayerConnected(id) then
             params[1] = sampGetPlayerNickname(id)
         else
-            sampAddChatMessage('РРіСЂРѕРє РѕС„С„Р»Р°Р№РЅ!', 0x00FA9A)
+            sampAddChatMessage('Игрок оффлайн!', 0x00FA9A)
             return
         end
     end
@@ -325,7 +343,7 @@ function cmd_getrank(args)
         ["sec-ch-ua-platform"] = '"Windows"',
         ["Content-Length"] = tostring(#body)
     }
-    sampAddChatMessage('Р—Р°РіСЂСѓР·РєР° РґР°РЅРЅС‹С…...', 0x00FA9A)
+    sampAddChatMessage('Загрузка данных...', 0x00FA9A)
     asyncHttpRequest('POST', 'https://logs.evolve-rp.com/saint-louis/journal', 
         {
             headers = headers,
@@ -335,7 +353,7 @@ function cmd_getrank(args)
             if response.status_code == 200 then
                 local jsonData = json.decode(response.text)
                 if #jsonData.data == 0 then
-                    sampAddChatMessage(string.format("{ffffff}%s {00FA9A}РІ Р»РѕРіР°С… РЅРµ РѕР±РЅР°СЂСѓР¶РµРЅ!", params[1]), 0x00FA9A)
+                    sampAddChatMessage(string.format("{ffffff}%s {00FA9A}в логах не обнаружен!", params[1]), 0x00FA9A)
                     return
                 end
                 asyncHttpRequest('GET', 'https://script.google.com/macros/s/AKfycbyNToZlIqnWl7mqaW4FjjHIjzMAJVPQ0OKBHWvdtTok9xOV6pt3rHzb0HsDrTKbkbHj/exec?nickname=' .. params[1], nil,
@@ -344,7 +362,7 @@ function cmd_getrank(args)
                         local data = html:gmatch('userHtml\\x22:\\x22(.-)\\x22')()
                         if #jsonData.data < params[2] then params[2] = #jsonData.data end
                         local rank = u8:decode(jsonData.data[1][6])
-                        if rank == "РњР»Р°РґС€РёР№ СЃРµСЂР¶Р°РЅС‚ [3]" or rank == "РЎРµСЂР¶Р°РЅС‚ [4]" or rank == "РЎС‚Р°СЂС€РёР№ СЃРµСЂР¶Р°РЅС‚ [5]" then
+                        if rank == "Младший сержант [3]" or rank == "Сержант [4]" or rank == "Старший сержант [5]" then
                             asyncHttpRequest('GET', 'https://script.google.com/macros/s/AKfycbxB7WwPsPpYHO5aPRdbrsrNuX2pZtS1s4GX8raft68PAX7BcKDee1GqVxUYCH2FrgiQ/exec?contract=' .. params[1], nil,
                                 function(response)
                                     local html = u8:decode(response.text)
@@ -352,16 +370,16 @@ function cmd_getrank(args)
                                     for i = params[2], 1, -1 do
                                         local line = jsonData.data[i]
                                         sampAddChatMessage("--------------------------------------------------------------------------------------------", 0x00FA9A)
-                                        sampAddChatMessage(string.format("{00FA9A}РРЅРёС†РёР°С‚РѕСЂ:{ffffff} %s | {00FA9A}РћР±СЉРµРєС‚:{ffffff} %s | {00FA9A}Р”РµР№СЃС‚РІРёРµ: {ffffff}%s", line[2], line[3], u8:decode(line[4])), 0x00FA9A)
-                                        sampAddChatMessage(string.format("{00FA9A}РЎС‚Р°СЂС‹Р№ СЂР°РЅРі:{ffffff} %s | {00FA9A}РќРѕРІС‹Р№ СЂР°РЅРі:{ffffff} %s | {00FA9A}РџСЂРёС‡РёРЅР°: {ffffff}%s", u8:decode(line[5]), u8:decode(line[6]), u8:decode(line[7])), 0x00FA9A)
-                                        sampAddChatMessage(string.format("{00FA9A}Р”Р°С‚Р°: {ffffff}%s | {00FA9A}РЎР»РµРґСѓСЋС‰РµРµ РїРѕРІС‹С€РµРЅРёРµ:{ffffff} %s", line[8], addDaysToDateString(line[8], getSrok(u8:decode(line[6])))), 0x00FA9A)
+                                        sampAddChatMessage(string.format("{00FA9A}Инициатор:{ffffff} %s | {00FA9A}Объект:{ffffff} %s | {00FA9A}Действие: {ffffff}%s", line[2], line[3], u8:decode(line[4])), 0x00FA9A)
+                                        sampAddChatMessage(string.format("{00FA9A}Старый ранг:{ffffff} %s | {00FA9A}Новый ранг:{ffffff} %s | {00FA9A}Причина: {ffffff}%s", u8:decode(line[5]), u8:decode(line[6]), u8:decode(line[7])), 0x00FA9A)
+                                        sampAddChatMessage(string.format("{00FA9A}Дата: {ffffff}%s | {00FA9A}Следующее повышение:{ffffff} %s", line[8], addDaysToDateString(line[8], getSrok(u8:decode(line[6])))), 0x00FA9A)
                                         sampAddChatMessage("--------------------------------------------------------------------------------------------", 0x00FA9A)
                                     end
                                     if data ~= '-1' then 
-                                        sampAddChatMessage(string.format("{FF0000}Р•СЃС‚СЊ РІС‹РіРѕРІРѕСЂС‹ РґРѕ %s", data), 0x00FA9A);
+                                        sampAddChatMessage(string.format("{FF0000}Есть выговоры до %s", data), 0x00FA9A);
                                     end
-                                    if data_contract ~= "РќРµС‚ РєРѕРЅС‚СЂР°РєС‚Р°" then
-                                        sampAddChatMessage(string.format("{00FA9A}РќР° РІРѕРµРЅРЅРѕР№ РєР°С„РµРґСЂРµ/РєРѕРЅС‚СЂР°РєС‚Рµ РґРѕ:{ffffff} %s", data_contract), 0x00FA9A)
+                                    if data_contract ~= "Нет контракта" then
+                                        sampAddChatMessage(string.format("{00FA9A}На военной кафедре/контракте до:{ffffff} %s", data_contract), 0x00FA9A)
                                     end
                                 end,
                                 function(err)
@@ -372,13 +390,13 @@ function cmd_getrank(args)
                             for i = params[2], 1, -1 do
                                 local line = jsonData.data[i]
                                 sampAddChatMessage("--------------------------------------------------------------------------------------------", 0x00FA9A)
-                                sampAddChatMessage(string.format("{00FA9A}РРЅРёС†РёР°С‚РѕСЂ:{ffffff} %s | {00FA9A}РћР±СЉРµРєС‚:{ffffff} %s | {00FA9A}Р”РµР№СЃС‚РІРёРµ: {ffffff}%s", line[2], line[3], u8:decode(line[4])), 0x00FA9A)
-                                sampAddChatMessage(string.format("{00FA9A}РЎС‚Р°СЂС‹Р№ СЂР°РЅРі:{ffffff} %s | {00FA9A}РќРѕРІС‹Р№ СЂР°РЅРі:{ffffff} %s | {00FA9A}РџСЂРёС‡РёРЅР°: {ffffff}%s", u8:decode(line[5]), u8:decode(line[6]), u8:decode(line[7])), 0x00FA9A)
-                                sampAddChatMessage(string.format("{00FA9A}Р”Р°С‚Р°: {ffffff}%s | {00FA9A}РЎР»РµРґСѓСЋС‰РµРµ РїРѕРІС‹С€РµРЅРёРµ:{ffffff} %s", line[8], addDaysToDateString(line[8], getSrok(u8:decode(line[6])))), 0x00FA9A)
+                                sampAddChatMessage(string.format("{00FA9A}Инициатор:{ffffff} %s | {00FA9A}Объект:{ffffff} %s | {00FA9A}Действие: {ffffff}%s", line[2], line[3], u8:decode(line[4])), 0x00FA9A)
+                                sampAddChatMessage(string.format("{00FA9A}Старый ранг:{ffffff} %s | {00FA9A}Новый ранг:{ffffff} %s | {00FA9A}Причина: {ffffff}%s", u8:decode(line[5]), u8:decode(line[6]), u8:decode(line[7])), 0x00FA9A)
+                                sampAddChatMessage(string.format("{00FA9A}Дата: {ffffff}%s | {00FA9A}Следующее повышение:{ffffff} %s", line[8], addDaysToDateString(line[8], getSrok(u8:decode(line[6])))), 0x00FA9A)
                                 sampAddChatMessage("--------------------------------------------------------------------------------------------", 0x00FA9A)
                             end
                             if data ~= '-1' then 
-                                sampAddChatMessage(string.format("{FF0000}Р•СЃС‚СЊ РІС‹РіРѕРІРѕСЂС‹ РґРѕ %s", data), 0x00FA9A);
+                                sampAddChatMessage(string.format("{FF0000}Есть выговоры до %s", data), 0x00FA9A);
                             end
                         end
                         
@@ -387,7 +405,7 @@ function cmd_getrank(args)
                         print(err)
                     end
                 )
-            else sampAddChatMessage("РћС€РёР±РєР° Р·Р°РіСЂСѓР·РєРё Р»РѕРіРѕРІ! РљРѕРґ: " .. response.status_code, 0x00FA9A) end
+            else sampAddChatMessage("Ошибка загрузки логов! Код: " .. response.status_code, 0x00FA9A) end
         end,
         function(err)
             print(err)
@@ -397,7 +415,7 @@ end
 
 function cmd_invite(args)
     if #args == 0 then
-        sampAddChatMessage('Р’РІРµРґРёС‚Рµ: /invite [id] [1 - РїСЂРёРЅСЏС‚СЊ Р±РµР· РїСЂРѕРІРµСЂРєРё РЅР° Р§РЎ]', 0x00FA9A)
+        sampAddChatMessage('Введите: /invite [id] [1 - принять без проверки на ЧС]', 0x00FA9A)
         return
     end
     local params, i = {}, 1
@@ -415,11 +433,11 @@ function cmd_invite(args)
         if sampIsPlayerConnected(id) then
             params[1] = sampGetPlayerNickname(id)
         else
-            sampAddChatMessage('РРіСЂРѕРє РѕС„С„Р»Р°Р№РЅ!', 0x00FA9A)
+            sampAddChatMessage('Игрок оффлайн!', 0x00FA9A)
             return
         end
     end
-    sampAddChatMessage('Р—Р°РіСЂСѓР·РєР° РґР°РЅРЅС‹С…...', 0x00FA9A)
+    sampAddChatMessage('Загрузка данных...', 0x00FA9A)
         asyncHttpRequest('GET', 'https://script.google.com/macros/s/AKfycbxwOW4H6tOcVXtQbwoEc8EzZEl9g1dEPJCUp6D1Fbjq0T6PVKoPv2qI48elNt6TU20txA/exec?nickname=' .. params[1], nil,
         function(response)
             local html = u8:decode(response.text)
@@ -437,8 +455,8 @@ function cmd_invite(args)
                 return
             end
             sampAddChatMessage("--------------------------------------------------------------------------------------------", 0x00FA9A)
-            sampAddChatMessage(string.format("{00FA9A}РќРёРє:{ffffff} %s | {00FA9A}Р’РЅС‘СЃ:{ffffff} %s | {00FA9A}Р”Р°С‚Р°: {ffffff}%s", info[2], info[1], info[4]), 0x00FA9A)
-            sampAddChatMessage(string.format("{00FA9A}РЎС‚РµРїРµРЅСЊ: {ffffff}%s | {00FA9A}РџСЂРёС‡РёРЅР°:{ffffff} %s", info[5], info[3]), 0x00FA9A)
+            sampAddChatMessage(string.format("{00FA9A}Ник:{ffffff} %s | {00FA9A}Внёс:{ffffff} %s | {00FA9A}Дата: {ffffff}%s", info[2], info[1], info[4]), 0x00FA9A)
+            sampAddChatMessage(string.format("{00FA9A}Степень: {ffffff}%s | {00FA9A}Причина:{ffffff} %s", info[5], info[3]), 0x00FA9A)
             sampAddChatMessage("--------------------------------------------------------------------------------------------", 0x00FA9A)
             return
         end,
@@ -450,7 +468,7 @@ end
 
 function cmd_checkcontract(arg)
     if #arg == 0 then
-        sampAddChatMessage('Р’РІРµРґРёС‚Рµ: /checkcontract [id / nick]', 0x00FA9A)
+        sampAddChatMessage('Введите: /checkcontract [id / nick]', 0x00FA9A)
         return
     end
     local id = tonumber(arg)
@@ -458,11 +476,11 @@ function cmd_checkcontract(arg)
         if sampIsPlayerConnected(id) then
             arg = sampGetPlayerNickname(id)
         else
-            sampAddChatMessage('РРіСЂРѕРє РѕС„С„Р»Р°Р№РЅ!', 0x00FA9A)
+            sampAddChatMessage('Игрок оффлайн!', 0x00FA9A)
             return
         end
     end
-    sampAddChatMessage('Р—Р°РіСЂСѓР·РєР° РґР°РЅРЅС‹С…...', 0x00FA9A)
+    sampAddChatMessage('Загрузка данных...', 0x00FA9A)
     asyncHttpRequest('GET', 'https://script.google.com/macros/s/AKfycbxB7WwPsPpYHO5aPRdbrsrNuX2pZtS1s4GX8raft68PAX7BcKDee1GqVxUYCH2FrgiQ/exec?nickname=' .. arg, nil,
         function(response)
             local html = u8:decode(response.text)
@@ -476,7 +494,7 @@ function cmd_checkcontract(arg)
 end
 
 function cmd_contracts()
-    sampAddChatMessage('Р—Р°РіСЂСѓР·РєР° РґР°РЅРЅС‹С…...', 0x00FA9A)
+    sampAddChatMessage('Загрузка данных...', 0x00FA9A)
     asyncHttpRequest('GET', 'https://script.google.com/macros/s/AKfycbxB7WwPsPpYHO5aPRdbrsrNuX2pZtS1s4GX8raft68PAX7BcKDee1GqVxUYCH2FrgiQ/exec', nil,
         function(response)
             local html = u8:decode(response.text)
@@ -489,7 +507,7 @@ function cmd_contracts()
                    flag = false
                 end
             end
-            if flag then sampAddChatMessage("РЎРїРёСЃРѕРє РїСѓСЃС‚", 0x00FA9A) end
+            if flag then sampAddChatMessage("Список пуст", 0x00FA9A) end
         end,
         function(err)
             print(err)
@@ -499,7 +517,7 @@ end
 
 function cmd_acccontract(arg)
     if #arg == 0 then
-        sampAddChatMessage('Р’РІРµРґРёС‚Рµ: /acccontract [id / nick]', 0x00FA9A)
+        sampAddChatMessage('Введите: /acccontract [id / nick]', 0x00FA9A)
         return
     end
     local _, myid = sampGetPlayerIdByCharHandle(PLAYER_PED)
@@ -509,11 +527,11 @@ function cmd_acccontract(arg)
         if sampIsPlayerConnected(id) then
             arg = sampGetPlayerNickname(id)
         else
-            sampAddChatMessage('РРіСЂРѕРє РѕС„С„Р»Р°Р№РЅ!', 0x00FA9A)
+            sampAddChatMessage('Игрок оффлайн!', 0x00FA9A)
             return
         end
     end
-    sampAddChatMessage('Р—Р°РіСЂСѓР·РєР° РґР°РЅРЅС‹С…...', 0x00FA9A)
+    sampAddChatMessage('Загрузка данных...', 0x00FA9A)
     asyncHttpRequest('GET', 'https://script.google.com/macros/s/AKfycbxB7WwPsPpYHO5aPRdbrsrNuX2pZtS1s4GX8raft68PAX7BcKDee1GqVxUYCH2FrgiQ/exec?nickname=' .. arg .. '&staff=' .. mynick, nil,
         function(response)
             local html = u8:decode(response.text)
@@ -538,13 +556,13 @@ function sampGetPlayerIdByNickname(nick)
 end
 
 function cmd_logshelp()
-    local text = "{00FA9A}/getbl [id/nick]{FFFFFF} - РџСЂРѕРІРµСЂРёС‚СЊ РёРіСЂРѕРєР° РІ Р§РЎ SFA\n" ..
-                 "{00FA9A}/getpun [id/nick]{FFFFFF} - РџСЂРѕРІРµСЂРёС‚СЊ СЂРµРµСЃС‚СЂ РЅР°РєР°Р·Р°РЅРёР№\n" ..
-                 "{00FA9A}/getrank [id/nick] [РєРѕР»-РІРѕ]{FFFFFF} - Р›РѕРіРё РїРѕРІС‹С€РµРЅРёР№/РїРѕРЅРёР¶РµРЅРёР№ (РїРѕСЃР». 25)\n" ..
-                 "{00FA9A}/invite [id] [1]{FFFFFF} - РџСЂРёРЅСЏС‚СЊ РІРѕ С„СЂР°РєС†РёСЋ СЃ РїСЂРѕРІРµСЂРєРѕР№ РЅР° Р§РЎ; [1] - РЅРµ РґРµР»Р°С‚СЊ РїСЂРѕРІРµСЂРєСѓ\n" ..
-                 "{00FA9A}/checkcontract [id/nick]{FFFFFF} - РџСЂРѕРІРµСЂРёС‚СЊ РЅР°Р»РёС‡РёРµ РѕРґРѕР±СЂРµРЅРЅРѕРіРѕ РєРѕРЅС‚СЂР°РєС‚Р°\n" ..
-                 "{00FA9A}/contracts{FFFFFF} - РЎРїРёСЃРѕРє РЅРµРїСЂРёРЅСЏС‚С‹С… РєРѕРЅС‚СЂР°РєС‚РЅРёРєРѕРІ РѕРЅР»Р°Р№РЅ\n" ..
-                 "{00FA9A}/acccontract [id/nick]{FFFFFF} - РџСЂРѕСЃС‚Р°РІРёС‚СЊ РїСЂРёРЅСЏС‚РёРµ РєРѕРЅС‚СЂР°РєС‚РЅРёРєР° РІ С‚Р°Р±Р»РёС†Рµ"
+    local text = "{00FA9A}/getbl [id/nick]{FFFFFF} - Проверить игрока в ЧС SFA\n" ..
+                 "{00FA9A}/getpun [id/nick]{FFFFFF} - Проверить реестр наказаний\n" ..
+                 "{00FA9A}/getrank [id/nick] [кол-во]{FFFFFF} - Логи повышений/понижений (посл. 25)\n" ..
+                 "{00FA9A}/invite [id] [1]{FFFFFF} - Принять во фракцию с проверкой на ЧС; [1] - не делать проверку\n" ..
+                 "{00FA9A}/checkcontract [id/nick]{FFFFFF} - Проверить наличие одобренного контракта\n" ..
+                 "{00FA9A}/contracts{FFFFFF} - Список непринятых контрактников онлайн\n" ..
+                 "{00FA9A}/acccontract [id/nick]{FFFFFF} - Проставить принятие контрактника в таблице"
                  
-    sampShowDialog(1337, "{00FA9A}checklogs help", text, "Р—Р°РєСЂС‹С‚СЊ", "", 0)
+    sampShowDialog(1337, "{00FA9A}checklogs help", text, "Закрыть", "", 0)
 end
