@@ -1,7 +1,8 @@
-script_name("checklogsSFA")
-script_version("11")
+script_name("checklogs")
+script_version("12")
 script_author("Неадекват, ЧСВ, Оскорбление DIS, Слив инфы DIS, хейтер DIS, Слив состава (Выход запрещён), Разжигатель вражды между USAF и DIS, (СЛИТ), Расформировал DIS, Разрушитель идеологии DIS или просто Leo_Markin")
 script_description("Проверяет ЧС SFA, реестр наказаний SFA, логи SFA")
+script_properties("work-in-pause")
 
 local enable_autoupdate = true -- false to disable auto-update + disable sending initial telemetry (server, moonloader version, script version, samp nickname, virtual volume serial number)
 local autoupdate_loaded = false
@@ -12,8 +13,8 @@ if enable_autoupdate then
         autoupdate_loaded, Update = pcall(Updater)
         if autoupdate_loaded then
             Update.json_url = "https://raw.githubusercontent.com/Leo-Markin/checklogsSFA/main/version.json?" .. tostring(os.clock())
-            Update.prefix = "[" .. string.upper(thisScript().name) .. "]: "
-            Update.url = "https://github.com/Leo-Markin/checklogsSFA/"
+            Update.prefix = "[" .. thisScript().name .. "]: "
+            Update.url = "https://raw.githubusercontent.com/Leo-Markin/checklogsSFA/main/checklogs.lua"
         end
     end
 end
@@ -338,13 +339,13 @@ function cmd_getrank(args)
         ["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
         ["Content-Type"] = "application/x-www-form-urlencoded; charset=UTF-8",
         ["Accept"] = "application/json, text/javascript, */*; q=0.01",
-        ["Referer"] = "https://logs.evolve-rp.com/saint-louis",
+        ["Referer"] = "https://logs.evolve-rp.ru/saint-louis",
         ["X-Requested-With"] = "XMLHttpRequest",
         ["sec-ch-ua-platform"] = '"Windows"',
         ["Content-Length"] = tostring(#body)
     }
     sampAddChatMessage('Загрузка данных...', 0x00FA9A)
-    asyncHttpRequest('POST', 'https://logs.evolve-rp.com/saint-louis/journal', 
+    asyncHttpRequest('POST', 'https://logs.evolve-rp.ru/saint-louis/journal', 
         {
             headers = headers,
             data = body
