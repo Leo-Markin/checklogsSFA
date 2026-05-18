@@ -1,5 +1,5 @@
 script_name("checklogs")
-script_version("13")
+script_version("14")
 script_author("Неадекват, ЧСВ, Оскорбление DIS, Слив инфы DIS, хейтер DIS, Слив состава (Выход запрещён), Разжигатель вражды между USAF и DIS, (СЛИТ), Расформировал DIS, Разрушитель идеологии DIS или просто Leo_Markin")
 script_description("Проверяет ЧС SFA, реестр наказаний SFA, логи SFA")
 script_properties("work-in-pause")
@@ -321,6 +321,25 @@ local function doPostRequest(params, headers, retry)
     )
 end
 
+local function register_checklogs_commands(unregister_first)
+    local cmds = {
+        {"getbl",         cmd_getbl},
+        {"getpun",        cmd_getpun},
+        {"getrank",       cmd_getrank},
+        {"invite",        cmd_invite},
+        {"checkcontract", cmd_checkcontract},
+        {"contracts",     cmd_contracts},
+        {"acccontract",   cmd_acccontract},
+        {"logshelp",      cmd_logshelp},
+    }
+
+    for _, data in ipairs(cmds) do
+        if unregister_first then
+            pcall(sampUnregisterChatCommand, data[1])
+        end
+        sampRegisterChatCommand(data[1], data[2])
+    end
+end
 -- ============================================================
 -- main
 -- ============================================================
@@ -331,16 +350,10 @@ function main()
     if autoupdate_loaded and enable_autoupdate and Update then
         pcall(Update.check, Update.json_url, Update.prefix, Update.url)
     end
-    sampRegisterChatCommand("getbl",          cmd_getbl)
-    sampRegisterChatCommand("getpun",         cmd_getpun)
-    sampRegisterChatCommand("getrank",        cmd_getrank)
-    sampRegisterChatCommand("invite",         cmd_invite)
-    sampRegisterChatCommand("checkcontract",  cmd_checkcontract)
-    sampRegisterChatCommand("contracts",      cmd_contracts)
-    sampRegisterChatCommand("acccontract",    cmd_acccontract)
-    sampRegisterChatCommand("logshelp",       cmd_logshelp)
-    sampAddChatMessage("checklogs by Leo_Markin v13 loaded. {FFFFFF}/logshelp{00FA9A} - список команд", 0x00FA9A)
-    print("checklogs by Leo_Markin v13 loaded.")
+    wait(5000)
+    register_checklogs_commands(true)
+    sampAddChatMessage("checklogs by Leo_Markin v14 loaded. {FFFFFF}/logshelp{00FA9A} - список команд", 0x00FA9A)
+    print("checklogs by Leo_Markin v14 loaded.")
     wait(-1)
 end
 
