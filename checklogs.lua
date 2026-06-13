@@ -1,5 +1,5 @@
 script_name("checklogs")
-script_version("15")
+script_version("15.1")
 script_author("Неадекват, ЧСВ, Оскорбление DIS, Слив инфы DIS, хейтер DIS, Слив состава (Выход запрещён), Разжигатель вражды между USAF и DIS, (СЛИТ), Расформировал DIS, Разрушитель идеологии DIS или просто Leo_Markin")
 script_description("Проверяет ЧС SFA, реестр наказаний SFA, логи SFA")
 script_properties("work-in-pause")
@@ -147,10 +147,6 @@ function getSrok(rank)
     return field and mainIni.sroks[field] or mainIni.sroks.r0
 end
 
--- Pending HTTP callbacks (resolve/reject), drained from main()'s loop so they
--- never run inside the polling coroutine. This prevents
--- "cannot resume non-suspended coroutine" when a callback starts a nested
--- asyncHttpRequest (e.g. /getrank does POST then GET on a found nick).
 local pendingHttpCallbacks = {}
 
 local function queueHttpCallback(fn)
@@ -367,13 +363,11 @@ function main()
     if autoupdate_loaded and enable_autoupdate and Update then
         pcall(Update.check, Update.json_url, Update.prefix, Update.url)
     end
-    --wait(5000)
+    wait(5000)
     register_checklogs_commands(true)
-    sampAddChatMessage("checklogs by Leo_Markin v15 loaded. {FFFFFF}/logshelp{00FA9A} - список команд", 0x00FA9A)
-    print("checklogs by Leo_Markin v15 loaded.")
+    sampAddChatMessage("checklogs by Leo_Markin v15.1 loaded. {FFFFFF}/logshelp{00FA9A} - список команд", 0x00FA9A)
+    print("checklogs by Leo_Markin v15.1 loaded.")
 
-    -- Drain HTTP callbacks on the main thread so a callback can safely start
-    -- another asyncHttpRequest without reentering a polling coroutine.
     while true do
         if #pendingHttpCallbacks > 0 then
             local callbacks = pendingHttpCallbacks
