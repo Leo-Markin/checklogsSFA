@@ -1,5 +1,5 @@
 script_name("checklogs")
-script_version("14")
+script_version("15")
 script_author("Неадекват, ЧСВ, Оскорбление DIS, Слив инфы DIS, хейтер DIS, Слив состава (Выход запрещён), Разжигатель вражды между USAF и DIS, (СЛИТ), Расформировал DIS, Разрушитель идеологии DIS или просто Leo_Markin")
 script_description("Проверяет ЧС SFA, реестр наказаний SFA, логи SFA")
 script_properties("work-in-pause")
@@ -147,6 +147,16 @@ function getSrok(rank)
     return field and mainIni.sroks[field] or mainIni.sroks.r0
 end
 
+-- Pending HTTP callbacks (resolve/reject), drained from main()'s loop so they
+-- never run inside the polling coroutine. This prevents
+-- "cannot resume non-suspended coroutine" when a callback starts a nested
+-- asyncHttpRequest (e.g. /getrank does POST then GET on a found nick).
+local pendingHttpCallbacks = {}
+
+local function queueHttpCallback(fn)
+    pendingHttpCallbacks[#pendingHttpCallbacks + 1] = fn
+end
+
 function asyncHttpRequest(method, url, args, resolve, reject)
     local request_thread = effil.thread(function(method, url, args)
         local requests = require "requests_script"
@@ -167,13 +177,20 @@ function asyncHttpRequest(method, url, args, resolve, reject)
             if not err then
                 if status == "completed" then
                     local result, response = runner:get()
-                    if result then resolve(response) else reject(response) end
+                    -- Defer off the polling coroutine: queue, main() runs it.
+                    if result then
+                        queueHttpCallback(function() resolve(response) end)
+                    else
+                        queueHttpCallback(function() reject(response) end)
+                    end
                     return
                 elseif status == "canceled" then
-                    return reject(status)
+                    queueHttpCallback(function() reject(status) end)
+                    return
                 end
             else
-                return reject(err)
+                queueHttpCallback(function() reject(err) end)
+                return
             end
             wait(0)
         end
@@ -350,11 +367,24 @@ function main()
     if autoupdate_loaded and enable_autoupdate and Update then
         pcall(Update.check, Update.json_url, Update.prefix, Update.url)
     end
-    wait(5000)
+    --wait(5000)
     register_checklogs_commands(true)
-    sampAddChatMessage("checklogs by Leo_Markin v14 loaded. {FFFFFF}/logshelp{00FA9A} - список команд", 0x00FA9A)
-    print("checklogs by Leo_Markin v14 loaded.")
-    wait(-1)
+    sampAddChatMessage("checklogs by Leo_Markin v15 loaded. {FFFFFF}/logshelp{00FA9A} - список команд", 0x00FA9A)
+    print("checklogs by Leo_Markin v15 loaded.")
+
+    -- Drain HTTP callbacks on the main thread so a callback can safely start
+    -- another asyncHttpRequest without reentering a polling coroutine.
+    while true do
+        if #pendingHttpCallbacks > 0 then
+            local callbacks = pendingHttpCallbacks
+            pendingHttpCallbacks = {}
+            for _, fn in ipairs(callbacks) do
+                local ok, err = pcall(fn)
+                if not ok then print("[checklogs] callback error: " .. tostring(err)) end
+            end
+        end
+        wait(0)
+    end
 end
 
 -- ============================================================
