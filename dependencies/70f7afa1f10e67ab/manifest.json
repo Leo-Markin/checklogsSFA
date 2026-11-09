@@ -1,0 +1,363 @@
+{
+  "schema": 1,
+  "files": [
+    {
+      "path": "lib/base64.dll",
+      "sha256": "4e19bac2a3e0a3e854143ed9259b82a4f405409b0d2928e10a27db672bf346be",
+      "size": 72192,
+      "modules": [
+        "base64"
+      ],
+      "gui": false
+    },
+    {
+      "path": "lib/cjson.dll",
+      "sha256": "9fa1f6c66644a3e14a7d0e8d2937512963773fd047fa6826482caa304ecf964c",
+      "size": 122880,
+      "modules": [
+        "cjson.safe"
+      ],
+      "gui": false
+    },
+    {
+      "path": "lib/effil.lua",
+      "sha256": "5685236a73337237372226bef9740a6f7cb981998912724a0e4bd326da7e96dd",
+      "size": 1654,
+      "modules": [
+        "effil"
+      ],
+      "gui": false
+    },
+    {
+      "path": "lib/encoding.lua",
+      "sha256": "57cb02218d46eb1b8b2b14ecde30fc0d1798fad9c69c2138ff9a7bf63d3efe9d",
+      "size": 2636,
+      "modules": [
+        "encoding"
+      ],
+      "gui": false
+    },
+    {
+      "path": "lib/iconv.dll",
+      "sha256": "bb4cc421b7606055d1d517775b15ce77a27ad97b14de2fc31c9d9e3cf788b98f",
+      "size": 1000960,
+      "modules": [
+        "iconv"
+      ],
+      "gui": false
+    },
+    {
+      "path": "lib/json.lua",
+      "sha256": "0eaccda57fabc0330736de25f45cf589821a42b5e0fe02e4e3125f7dc0bf2b7e",
+      "size": 9638,
+      "modules": [
+        "json"
+      ],
+      "gui": false
+    },
+    {
+      "path": "lib/lfs.dll",
+      "sha256": "2f093e36fc36ec56c852181f428c1d5b6ad9d1071b53f21e93946c490a24609a",
+      "size": 126976,
+      "modules": [
+        "lfs"
+      ],
+      "gui": false
+    },
+    {
+      "path": "lib/libeffil.dll",
+      "sha256": "8ac736f5d9116fda2682909477bb7da83e53fbc1eaaeb2826aec35dbd6da874c",
+      "size": 594432,
+      "modules": [
+        "libeffil"
+      ],
+      "gui": false
+    },
+    {
+      "path": "lib/ltn12.lua",
+      "sha256": "3bf0000f86d25da94089d47de3bbb204fd5be491edbe275730e73f68c710ea42",
+      "size": 8331,
+      "modules": [
+        "ltn12"
+      ],
+      "gui": false
+    },
+    {
+      "path": "lib/lub/Autoload.lua",
+      "sha256": "0c6f85b09079a01359b1073e7870aec9f325b9aabfa41f8ff557152437ef0318",
+      "size": 2877,
+      "modules": [
+        "lub.Autoload"
+      ],
+      "gui": false
+    },
+    {
+      "path": "lib/lub/init.lua",
+      "sha256": "b9a5335d638ff9776679a677e8df5f41a90f8a94b91f41b371273371047c806e",
+      "size": 20988,
+      "modules": [
+        "lub"
+      ],
+      "gui": false
+    },
+    {
+      "path": "lib/md5.lua",
+      "sha256": "921f2e4d48d8987be0eb96a93762a918bbdd825b7c506ef68aedf1b217ae6355",
+      "size": 836,
+      "modules": [
+        "md5"
+      ],
+      "gui": false
+    },
+    {
+      "path": "lib/md5/core.dll",
+      "sha256": "cba9525d93957d6b442ef019557cf6c47bde0aad07652c897900475335e281e0",
+      "size": 75776,
+      "modules": [
+        "md5.core"
+      ],
+      "gui": false
+    },
+    {
+      "path": "lib/mime.lua",
+      "sha256": "a548fc214ac1e935afa683df9bdbeded0ca60cf353dfcc16f6db0187b9fc512d",
+      "size": 2487,
+      "modules": [
+        "mime"
+      ],
+      "gui": false
+    },
+    {
+      "path": "lib/mime/core.dll",
+      "sha256": "e845e535e70086ab72f18d53d00cf80d15300089ab78db3eff383b5854e8667f",
+      "size": 77824,
+      "modules": [
+        "mime.core"
+      ],
+      "gui": false
+    },
+    {
+      "path": "lib/mimgui/cdefs.lua",
+      "sha256": "55b10a5b13590a076ffaf3a109f4748be305a76943313ddf22c9d9a5761bcaad",
+      "size": 116058,
+      "modules": [
+        "mimgui.cdefs"
+      ],
+      "gui": true
+    },
+    {
+      "path": "lib/mimgui/cimguidx9.dll",
+      "sha256": "1a7a059974c33095edc2f2da880d7c79c99d7e3b3c189e2f51036bb7e519d88b",
+      "size": 543744,
+      "modules": [],
+      "gui": true
+    },
+    {
+      "path": "lib/mimgui/dx9.lua",
+      "sha256": "32904fdf0d1c8ecf6842df2c6feac94545cdf1c98631e174f0ccd50f37185f38",
+      "size": 6905,
+      "modules": [
+        "mimgui.dx9"
+      ],
+      "gui": true
+    },
+    {
+      "path": "lib/mimgui/imgui.lua",
+      "sha256": "a55619546334392b1c654c9c0d9034dd971049906f277a60f27dd77bf7ae2cc6",
+      "size": 101558,
+      "modules": [
+        "mimgui.imgui"
+      ],
+      "gui": true
+    },
+    {
+      "path": "lib/mimgui/init.lua",
+      "sha256": "f5eae58ffd41cec4f7e306b5edd45f1cc596ec2dec74c7b402462f013e130500",
+      "size": 12042,
+      "modules": [
+        "mimgui"
+      ],
+      "gui": true
+    },
+    {
+      "path": "lib/moonloader.lua",
+      "sha256": "58dc9a058468f53efda285b2e1bc41318ca84e1e0c4821e38c70766029c1530e",
+      "size": 3171,
+      "modules": [
+        "lib.moonloader"
+      ],
+      "gui": false
+    },
+    {
+      "path": "lib/requests_script.lua",
+      "sha256": "0dcfd9c021345e7b3bb7f2c5ab06868c90d20f672ab2b0994e53f827fc8f8082",
+      "size": 9018,
+      "modules": [
+        "requests_script"
+      ],
+      "gui": false
+    },
+    {
+      "path": "lib/slowAES_l51.lua",
+      "sha256": "45acc4e2122c28fde63b15da6993d7e8e66e62daec81ee307e8b7bdb163a004e",
+      "size": 15363,
+      "modules": [
+        "lib.slowAES_l51"
+      ],
+      "gui": false
+    },
+    {
+      "path": "lib/socket.lua",
+      "sha256": "332871e3beeaccf8bff18cde1509e81c2bd16beb511b1fe586c12862dc7667b2",
+      "size": 4451,
+      "modules": [
+        "socket"
+      ],
+      "gui": false
+    },
+    {
+      "path": "lib/socket/core.dll",
+      "sha256": "c7e65c06df09addf05fd807e964e87f4ea56476e15e19ea5e47a321419ace50e",
+      "size": 142848,
+      "modules": [
+        "socket.core"
+      ],
+      "gui": false
+    },
+    {
+      "path": "lib/socket/headers.lua",
+      "sha256": "aecff8c2d99d77a6473269367d5b085ad0db189d9699c2f47dcb97ae5ad348df",
+      "size": 3698,
+      "modules": [
+        "socket.headers"
+      ],
+      "gui": false
+    },
+    {
+      "path": "lib/socket/http.lua",
+      "sha256": "9bdf0c2b37f1941e4a65c31697187ee976b43d0a4a8865b96260222f85c0fdb8",
+      "size": 12330,
+      "modules": [
+        "socket.http"
+      ],
+      "gui": false
+    },
+    {
+      "path": "lib/socket/url.lua",
+      "sha256": "7290952cba25a671e0434a01b5693855cb5d19ba777adb302779b050d8b0d3c7",
+      "size": 11036,
+      "modules": [
+        "socket.url"
+      ],
+      "gui": false
+    },
+    {
+      "path": "lib/ssl.dll",
+      "sha256": "7ae579c19b20e618cd30d661bb22f3e9736428d1b62b1e758d87da32c00409c5",
+      "size": 1633280,
+      "modules": [
+        "ssl.core",
+        "ssl.context",
+        "ssl.x509"
+      ],
+      "gui": false
+    },
+    {
+      "path": "lib/ssl.lua",
+      "sha256": "1926c6fc79396cb573f40b8e3fd4810f2b48b9b76e62d2e190041eab1d4a4d16",
+      "size": 4842,
+      "modules": [
+        "ssl"
+      ],
+      "gui": false
+    },
+    {
+      "path": "lib/ssl/https.lua",
+      "sha256": "4a4d95bf6b4b3e8a0af84e1e53eb799e96c23a1527b424748927f5a62aa1318b",
+      "size": 4176,
+      "modules": [
+        "ssl.https"
+      ],
+      "gui": false
+    },
+    {
+      "path": "lib/vkeys.lua",
+      "sha256": "a74b3f76666e8c8b9fa078e239bcfd3123762ee064c242f9349fdda9a449718b",
+      "size": 9814,
+      "modules": [
+        "lib.vkeys"
+      ],
+      "gui": false
+    },
+    {
+      "path": "lib/windows/message.lua",
+      "sha256": "4ab3845c28e7755c86736162fd22cba165e534ec1df5c76665ce8ffdbb8a929f",
+      "size": 26909,
+      "modules": [
+        "windows.message"
+      ],
+      "gui": true
+    },
+    {
+      "path": "lib/xml/Parser.lua",
+      "sha256": "c46fa675a7f6303c70bfdffec3bbd4b6babe91fae463ab8d75bbf27f05c6125f",
+      "size": 1750,
+      "modules": [
+        "xml.Parser"
+      ],
+      "gui": false
+    },
+    {
+      "path": "lib/xml/core.dll",
+      "sha256": "7f02af34a92b286bcad9ff5afc3deede314737b9957a9f1cad0108fb087555b6",
+      "size": 140800,
+      "modules": [
+        "xml.core"
+      ],
+      "gui": false
+    },
+    {
+      "path": "lib/xml/init.lua",
+      "sha256": "49648e800722d846cf2a77d5cb4569b46458f217a19aadd4ca9b6652e48ce210",
+      "size": 7549,
+      "modules": [
+        "xml"
+      ],
+      "gui": false
+    }
+  ],
+  "updater": {
+    "path": "update-checklogs-libraries.ps1",
+    "sha256": "a5a65d618e31c6302cd046db7acaf1c72efd641a960418093c187bb0502e1ab4",
+    "size": 4680
+  },
+  "notices": [
+    {
+      "path": "notices/iconv/COPYING-libiconv",
+      "sha256": "56bdea73b6145ef6ac5259b3da390b981d840c24cb03b8e1cbc678de7ecfa18d"
+    },
+    {
+      "path": "notices/iconv/README-libiconv",
+      "sha256": "b4f5932ef35fe4a66ae9e8eecf1bac0702fe2a75ece40861baf3ebbc0ee9ed02"
+    },
+    {
+      "path": "notices/iconv/README-lua-iconv",
+      "sha256": "7aebae7bea8fb38be3aa18b6e2e6298f9370bfe0b3415ac19fe4d04ba5fca58a"
+    }
+  ],
+  "builtins": [
+    "bit",
+    "ffi",
+    "inicfg",
+    "memory",
+    "Lua standard libraries"
+  ],
+  "system": [
+    "lua51.dll (MoonLoader)",
+    "DirectX 9 June 2010 x86",
+    "Visual C++ runtime x86",
+    "Windows system DLLs",
+    "Windows fonts"
+  ],
+  "bundle": "70f7afa1f10e67ab"
+}

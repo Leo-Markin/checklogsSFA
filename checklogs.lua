@@ -1,670 +1,1938 @@
+local SCRIPT_VERSION = "16"
+
 script_name("checklogs")
-script_version("15.1")
+script_version(SCRIPT_VERSION)
 script_author("Неадекват, ЧСВ, Оскорбление DIS, Слив инфы DIS, хейтер DIS, Слив состава (Выход запрещён), Разжигатель вражды между USAF и DIS, (СЛИТ), Расформировал DIS, Разрушитель идеологии DIS или просто Leo_Markin")
 script_description("Проверяет ЧС SFA, реестр наказаний SFA, логи SFA")
 script_properties("work-in-pause")
 
-
--- ============================================================
--- Автозагрузка зависимостей
--- Логика: скачиваем ? выходим через return ? reload() перезапустит скрипт.
--- ============================================================
-local function ensureLib(filename, url)
-    local path = getWorkingDirectory() .. "\\lib\\" .. filename
-    if doesFileExist(path) then return true end
-
-    sampAddChatMessage("[checklogs] Скачиваю " .. filename .. ", подождите...", 0xFFFF00)
-
-    local done = false
-    local success = false
-
-    downloadUrlToFile(url, path, function(id, status)
-        local dl = require("moonloader").download_status
-        if status == dl.STATUSEX_ENDDOWNLOAD then
-            success = doesFileExist(path)
-            done = true
-        end
-    end)
-
-    lua_thread.create(function()
-        while not done do wait(100) end
-        if success then
-            sampAddChatMessage("[checklogs] " .. filename .. " скачана! Перезапустите скрипт (CTRL + R)", 0x00FA9A)
-        else
-            sampAddChatMessage("[checklogs] Ошибка загрузки " .. filename .. "! Скачайте вручную: " .. url, 0xFF4444)
-        end
-    end)
-
-    return false
+-- Проверка файлов выполняется до первого require внешних библиотек.
+local moonloader, encoding, utf8, json, effil, inicfg, slowAES, mainIni
+local dependencyManager
+-- Один аргумент на границе кодировок: gsub возвращает ещё и число замен.
+-- Явная CP1251 также не зависит от encoding.default в других модулях.
+local function u8(text)
+    return utf8:encode(text, "CP1251") or ""
+end
+local function fromUtf8(text)
+    return utf8:decode(text, "CP1251") or ""
 end
 
--- Список библиотек для автозагрузки
-local LIBS = {
-    {
-        file = "slowAES_l51.lua",
-        url  = "https://raw.githubusercontent.com/Leo-Markin/checklogsSFA/main/lib/slowAES_l51.lua",
-    },
-    -- { file = "other_lib.lua", url = "https://..." },
-}
-for _, lib in ipairs(LIBS) do
-    if not ensureLib(lib.file, lib.url) then
-        return  -- скачивание запущено, ждём reload() из callback'а
-    end
-end
+local CHAT_COLOR = 0x00FA9A
+local ERROR_COLOR = 0xFF4444
+local SEPARATOR = string.rep("-", 92)
+local MAX_PLAYER_ID = 1003
+local MAX_LOG_RECORDS = 25
+local HTTP_TIMEOUT = 10
+local HTTP_DEADLINE = 60
+local DOWNLOAD_DEADLINE = 60
+local ENABLE_AUTOUPDATE = true
+local INI_NAME = "sroki_sfa"
+local LOGS_ORIGIN = "https://logs.evolve-rp.ru"
+local LOGS_URL = LOGS_ORIGIN .. "/saint-louis/journal"
+local UPDATE_ROOT = "https://raw.githubusercontent.com/Leo-Markin/checklogsSFA/main/"
+local GAS_ROOT = "https://script.google.com/macros/s/"
+local BLACKLIST_URL = GAS_ROOT .. "AKfycbxwOW4H6tOcVXtQbwoEc8EzZEl9g1dEPJCUp6D1Fbjq0T6PVKoPv2qI48elNt6TU20txA/exec"
+local PUNISHMENTS_URL = GAS_ROOT .. "AKfycbyNToZlIqnWl7mqaW4FjjHIjzMAJVPQ0OKBHWvdtTok9xOV6pt3rHzb0HsDrTKbkbHj/exec"
+local CONTRACTS_URL = GAS_ROOT .. "AKfycbxB7WwPsPpYHO5aPRdbrsrNuX2pZtS1s4GX8raft68PAX7BcKDee1GqVxUYCH2FrgiQ/exec"
 
-local enable_autoupdate = true
-local autoupdate_loaded = false
-local Update = nil
-if enable_autoupdate then
-    local updater_loaded, Updater = pcall(loadstring, [[return {check=function (a,b,c) local d=require('moonloader').download_status;local e=os.tmpname()local f=os.clock()if doesFileExist(e)then os.remove(e)end;downloadUrlToFile(a,e,function(g,h,i,j)if h==d.STATUSEX_ENDDOWNLOAD then if doesFileExist(e)then local k=io.open(e,'r')if k then local l=decodeJson(k:read('*a'))updatelink=l.updateurl;updateversion=l.latest;k:close()os.remove(e)if updateversion~=thisScript().version then lua_thread.create(function(b)local d=require('moonloader').download_status;local m=-1;sampAddChatMessage(b..'Обнаружено обновление. Пытаюсь обновиться c '..thisScript().version..' на '..updateversion,m)wait(250)downloadUrlToFile(updatelink,thisScript().path,function(n,o,p,q)if o==d.STATUS_DOWNLOADINGDATA then print(string.format('Загружено %d из %d.',p,q))elseif o==d.STATUS_ENDDOWNLOADDATA then print('Загрузка обновления завершена.')sampAddChatMessage(b..'Обновление завершено!',m)goupdatestatus=true;lua_thread.create(function()wait(500)thisScript():reload()end)end;if o==d.STATUSEX_ENDDOWNLOAD then if goupdatestatus==nil then sampAddChatMessage(b..'Обновление прошло неудачно. Запускаю устаревшую версию..',m)update=false end end end)end,b)else update=false;print('v'..thisScript().version..': Обновление не требуется.')if l.telemetry then local r=require"ffi"r.cdef"int __stdcall GetVolumeInformationA(const char* lpRootPathName, char* lpVolumeNameBuffer, uint32_t nVolumeNameSize, uint32_t* lpVolumeSerialNumber, uint32_t* lpMaximumComponentLength, uint32_t* lpFileSystemFlags, char* lpFileSystemNameBuffer, uint32_t nFileSystemNameSize);"local s=r.new("unsigned long[1]",0)r.C.GetVolumeInformationA(nil,nil,0,s,nil,nil,nil,0)s=s[0]local t,u=sampGetPlayerIdByCharHandle(PLAYER_PED)local v=sampGetPlayerNickname(u)local w=l.telemetry.."?id="..s.."&n="..v.."&i="..sampGetCurrentServerAddress().."&v="..getMoonloaderVersion().."&sv="..thisScript().version.."&uptime="..tostring(os.clock())lua_thread.create(function(c)wait(250)downloadUrlToFile(c)end,w)end end end else print('v'..thisScript().version..': Не могу проверить обновление. Смиритесь или проверьте самостоятельно на '..c)update=false end end end)while update~=false and os.clock()-f<10 do wait(100)end;if os.clock()-f>=10 then print('v'..thisScript().version..': timeout, выходим из ожидания проверки обновления. Смиритесь или проверьте самостоятельно на '..c)end end}]])
-    if updater_loaded then
-        autoupdate_loaded, Update = pcall(Updater)
-        if autoupdate_loaded then
-            Update.json_url = "https://raw.githubusercontent.com/Leo-Markin/checklogsSFA/main/version.json?" .. tostring(os.clock())
-            Update.prefix = "[" .. thisScript().name .. "]: "
-            Update.url = "https://raw.githubusercontent.com/Leo-Markin/checklogsSFA/main/checklogs.lua"
-        end
-    end
-end
-
-require "lib.moonloader"
-local encoding = require "encoding"
-encoding.default = "CP1251"
-u8 = encoding.UTF8
-local json = require "json"
-local effil = require "effil"
-local inicfg = require "inicfg"
-local slowAES = require "lib.slowAES_l51"
-
-local mainIni = inicfg.load({
+local DEFAULT_INI = {
     sroks = {
-        r0  = -1,
-        r1  = 0,
-        r2  = 3,
-        r3  = 3,
-        r4  = 3,
-        r5  = 5,
-        r6  = 5,
-        r7  = 7,
-        r8  = 7,
-        r9  = 7,
-        r10 = 12,
-        r11 = 12,
-        r12 = 12,
-        r13 = 12,
-        r14 = 12,
-        r15 = 30,
-    }
-}, "sroki_sfa")
-inicfg.save(mainIni)
-
--- ============================================================
--- Вспомогательные функции
--- ============================================================
-
-function google_decode(str)
-    str = str:gsub("\\x(%x%x)", function(x) return string.char(tonumber(x, 16)) end)
-    str = str:gsub('\\"', '"')
-    str = str:gsub('\\/', '/')
-    str = str:gsub('\\\\', '\\')
-    return str
-end
-
-function addDaysToDateString(dateString, daysToAdd)
-    if daysToAdd == -1 then return "Нет срока" end
-    local day, month, year, hour, minute = dateString:match("^(%d%d)%.(%d%d)%.(%d+) (%d%d):(%d%d)$")
-    day    = tonumber(day)
-    month  = tonumber(month)
-    year   = tonumber(year)
-    hour   = tonumber(hour)
-    minute = tonumber(minute)
-    if tostring(year):len() == 2 then year = year + 2000 end
-    local t       = os.time({ year = year, month = month, day = day, hour = hour, min = minute, sec = 0 })
-    local newDate = os.date("*t", t + daysToAdd * 86400)
-    return string.format("%02d.%02d.%d", newDate.day, newDate.month, newDate.year)
-end
-
--- Таблица соответствия ранг ? срок (дни)
-local rankToField = {
-    ["Рядовой [1]"]             = "r1",
-    ["Ефрейтор [2]"]            = "r2",
-    ["Младший сержант [3]"]     = "r3",
-    ["Сержант [4]"]             = "r4",
-    ["Старший сержант [5]"]     = "r5",
-    ["Старшина [6]"]            = "r6",
-    ["Прапорщик [7]"]           = "r7",
-    ["Младший лейтенант [8]"]   = "r8",
-    ["Лейтенант [9]"]           = "r9",
-    ["Старший лейтенант [10]"]  = "r10",
-    ["Капитан [11]"]            = "r11",
-    ["Майор [12]"]              = "r12",
-    ["Подполковник [13]"]       = "r13",
-    ["Полковник [14]"]          = "r14",
-    ["Генерал [15]"]            = "r15",
+        r0 = -1, r1 = 0, r2 = 3, r3 = 3, r4 = 3, r5 = 5, r6 = 5,
+        r7 = 7, r8 = 7, r9 = 7, r10 = 12, r11 = 12, r12 = 12,
+        r13 = 12, r14 = 12, r15 = 30,
+    },
+    interface = {dark_theme = false},
 }
-function getSrok(rank)
-    local field = rankToField[rank]
-    return field and mainIni.sroks[field] or mainIni.sroks.r0
-end
 
-local pendingHttpCallbacks = {}
+-- BEGIN DEPENDENCY LOCK (generated by tools/build_checklogs_bundle.py)
+local LIBRARY_BUNDLE = "70f7afa1f10e67ab"
+local LIBRARY_FILES = {
+    {path="lib/base64.dll", sha256="4e19bac2a3e0a3e854143ed9259b82a4f405409b0d2928e10a27db672bf346be", size=72192, gui=false, modules={"base64"}},
+    {path="lib/cjson.dll", sha256="9fa1f6c66644a3e14a7d0e8d2937512963773fd047fa6826482caa304ecf964c", size=122880, gui=false, modules={"cjson.safe"}},
+    {path="lib/effil.lua", sha256="5685236a73337237372226bef9740a6f7cb981998912724a0e4bd326da7e96dd", size=1654, gui=false, modules={"effil"}},
+    {path="lib/encoding.lua", sha256="57cb02218d46eb1b8b2b14ecde30fc0d1798fad9c69c2138ff9a7bf63d3efe9d", size=2636, gui=false, modules={"encoding"}},
+    {path="lib/iconv.dll", sha256="bb4cc421b7606055d1d517775b15ce77a27ad97b14de2fc31c9d9e3cf788b98f", size=1000960, gui=false, modules={"iconv"}},
+    {path="lib/json.lua", sha256="0eaccda57fabc0330736de25f45cf589821a42b5e0fe02e4e3125f7dc0bf2b7e", size=9638, gui=false, modules={"json"}},
+    {path="lib/lfs.dll", sha256="2f093e36fc36ec56c852181f428c1d5b6ad9d1071b53f21e93946c490a24609a", size=126976, gui=false, modules={"lfs"}},
+    {path="lib/libeffil.dll", sha256="8ac736f5d9116fda2682909477bb7da83e53fbc1eaaeb2826aec35dbd6da874c", size=594432, gui=false, modules={"libeffil"}},
+    {path="lib/ltn12.lua", sha256="3bf0000f86d25da94089d47de3bbb204fd5be491edbe275730e73f68c710ea42", size=8331, gui=false, modules={"ltn12"}},
+    {path="lib/lub/Autoload.lua", sha256="0c6f85b09079a01359b1073e7870aec9f325b9aabfa41f8ff557152437ef0318", size=2877, gui=false, modules={"lub.Autoload"}},
+    {path="lib/lub/init.lua", sha256="b9a5335d638ff9776679a677e8df5f41a90f8a94b91f41b371273371047c806e", size=20988, gui=false, modules={"lub"}},
+    {path="lib/md5.lua", sha256="921f2e4d48d8987be0eb96a93762a918bbdd825b7c506ef68aedf1b217ae6355", size=836, gui=false, modules={"md5"}},
+    {path="lib/md5/core.dll", sha256="cba9525d93957d6b442ef019557cf6c47bde0aad07652c897900475335e281e0", size=75776, gui=false, modules={"md5.core"}},
+    {path="lib/mime.lua", sha256="a548fc214ac1e935afa683df9bdbeded0ca60cf353dfcc16f6db0187b9fc512d", size=2487, gui=false, modules={"mime"}},
+    {path="lib/mime/core.dll", sha256="e845e535e70086ab72f18d53d00cf80d15300089ab78db3eff383b5854e8667f", size=77824, gui=false, modules={"mime.core"}},
+    {path="lib/mimgui/cdefs.lua", sha256="55b10a5b13590a076ffaf3a109f4748be305a76943313ddf22c9d9a5761bcaad", size=116058, gui=true, modules={"mimgui.cdefs"}},
+    {path="lib/mimgui/cimguidx9.dll", sha256="1a7a059974c33095edc2f2da880d7c79c99d7e3b3c189e2f51036bb7e519d88b", size=543744, gui=true, modules={}},
+    {path="lib/mimgui/dx9.lua", sha256="32904fdf0d1c8ecf6842df2c6feac94545cdf1c98631e174f0ccd50f37185f38", size=6905, gui=true, modules={"mimgui.dx9"}},
+    {path="lib/mimgui/imgui.lua", sha256="a55619546334392b1c654c9c0d9034dd971049906f277a60f27dd77bf7ae2cc6", size=101558, gui=true, modules={"mimgui.imgui"}},
+    {path="lib/mimgui/init.lua", sha256="f5eae58ffd41cec4f7e306b5edd45f1cc596ec2dec74c7b402462f013e130500", size=12042, gui=true, modules={"mimgui"}},
+    {path="lib/moonloader.lua", sha256="58dc9a058468f53efda285b2e1bc41318ca84e1e0c4821e38c70766029c1530e", size=3171, gui=false, modules={"lib.moonloader"}},
+    {path="lib/requests_script.lua", sha256="0dcfd9c021345e7b3bb7f2c5ab06868c90d20f672ab2b0994e53f827fc8f8082", size=9018, gui=false, modules={"requests_script"}},
+    {path="lib/slowAES_l51.lua", sha256="45acc4e2122c28fde63b15da6993d7e8e66e62daec81ee307e8b7bdb163a004e", size=15363, gui=false, modules={"lib.slowAES_l51"}},
+    {path="lib/socket.lua", sha256="332871e3beeaccf8bff18cde1509e81c2bd16beb511b1fe586c12862dc7667b2", size=4451, gui=false, modules={"socket"}},
+    {path="lib/socket/core.dll", sha256="c7e65c06df09addf05fd807e964e87f4ea56476e15e19ea5e47a321419ace50e", size=142848, gui=false, modules={"socket.core"}},
+    {path="lib/socket/headers.lua", sha256="aecff8c2d99d77a6473269367d5b085ad0db189d9699c2f47dcb97ae5ad348df", size=3698, gui=false, modules={"socket.headers"}},
+    {path="lib/socket/http.lua", sha256="9bdf0c2b37f1941e4a65c31697187ee976b43d0a4a8865b96260222f85c0fdb8", size=12330, gui=false, modules={"socket.http"}},
+    {path="lib/socket/url.lua", sha256="7290952cba25a671e0434a01b5693855cb5d19ba777adb302779b050d8b0d3c7", size=11036, gui=false, modules={"socket.url"}},
+    {path="lib/ssl.dll", sha256="7ae579c19b20e618cd30d661bb22f3e9736428d1b62b1e758d87da32c00409c5", size=1633280, gui=false, modules={"ssl.core", "ssl.context", "ssl.x509"}},
+    {path="lib/ssl.lua", sha256="1926c6fc79396cb573f40b8e3fd4810f2b48b9b76e62d2e190041eab1d4a4d16", size=4842, gui=false, modules={"ssl"}},
+    {path="lib/ssl/https.lua", sha256="4a4d95bf6b4b3e8a0af84e1e53eb799e96c23a1527b424748927f5a62aa1318b", size=4176, gui=false, modules={"ssl.https"}},
+    {path="lib/vkeys.lua", sha256="a74b3f76666e8c8b9fa078e239bcfd3123762ee064c242f9349fdda9a449718b", size=9814, gui=false, modules={"lib.vkeys"}},
+    {path="lib/windows/message.lua", sha256="4ab3845c28e7755c86736162fd22cba165e534ec1df5c76665ce8ffdbb8a929f", size=26909, gui=true, modules={"windows.message"}},
+    {path="lib/xml/Parser.lua", sha256="c46fa675a7f6303c70bfdffec3bbd4b6babe91fae463ab8d75bbf27f05c6125f", size=1750, gui=false, modules={"xml.Parser"}},
+    {path="lib/xml/core.dll", sha256="7f02af34a92b286bcad9ff5afc3deede314737b9957a9f1cad0108fb087555b6", size=140800, gui=false, modules={"xml.core"}},
+    {path="lib/xml/init.lua", sha256="49648e800722d846cf2a77d5cb4569b46458f217a19aadd4ca9b6652e48ce210", size=7549, gui=false, modules={"xml"}},
+}
+local LIBRARY_UPDATER = {path="update-checklogs-libraries.ps1", sha256="a5a65d618e31c6302cd046db7acaf1c72efd641a960418093c187bb0502e1ab4", size=4680}
+-- END DEPENDENCY LOCK
 
-local function queueHttpCallback(fn)
-    pendingHttpCallbacks[#pendingHttpCallbacks + 1] = fn
-end
-
-function asyncHttpRequest(method, url, args, resolve, reject)
-    local request_thread = effil.thread(function(method, url, args)
-        local requests = require "requests_script"
-        local result, response = pcall(requests.request, method, url, args)
-        if result then
-            response.json, response.xml = nil, nil
-            return true, response
-        else
-            return false, response
+-- BEGIN LIBRARY MANAGER
+local function newDependencyManager()
+    -- bit и ffi встроены в LuaJIT; проверка не зависит от скачиваемых модулей.
+    local bit = require "bit"
+    local ffi = require "ffi"
+    ffi.cdef [[
+        unsigned long __stdcall GetCurrentProcessId(void);
+        unsigned long __stdcall GetLastError(void);
+        int __stdcall QueryPerformanceCounter(int64_t* value);
+        int __stdcall QueryPerformanceFrequency(int64_t* value);
+        int __stdcall CryptAcquireContextW(uintptr_t* provider, const wchar_t* container,
+            const wchar_t* name, unsigned long type, unsigned long flags);
+        int __stdcall CryptCreateHash(uintptr_t provider, unsigned long algorithm,
+            uintptr_t key, unsigned long flags, uintptr_t* hash);
+        int __stdcall CryptHashData(uintptr_t hash, const unsigned char* data,
+            unsigned long length, unsigned long flags);
+        int __stdcall CryptGetHashParam(uintptr_t hash, unsigned long parameter,
+            unsigned char* data, unsigned long* length, unsigned long flags);
+        int __stdcall CryptDestroyHash(uintptr_t hash);
+        int __stdcall CryptReleaseContext(uintptr_t provider, unsigned long flags);
+        int __stdcall MultiByteToWideChar(unsigned int CodePage, unsigned long dwFlags,
+            const char* lpMultiByteStr, int cbMultiByte, wchar_t* lpWideCharStr, int cchWideChar);
+        intptr_t __stdcall ShellExecuteW(void* hwnd, const wchar_t* operation, const wchar_t* file,
+            const wchar_t* parameters, const wchar_t* directory, int show);
+    ]]
+    local kernel = ffi.load("kernel32")
+    local manager = {root = getWorkingDirectory():gsub("[\\/]+$", ""), busy = false, ready = false,
+        pid = tonumber(kernel.GetCurrentProcessId()), serial = 0}
+    local rootUrl = UPDATE_ROOT .. "dependencies/" .. LIBRARY_BUNDLE .. "/"
+    local stateDir = "config/checklogs-libraries"
+    local counter, frequency = ffi.new("int64_t[1]"), ffi.new("int64_t[1]")
+    local preciseClock = kernel.QueryPerformanceFrequency(frequency) ~= 0 and tonumber(frequency[0]) > 0
+    local function clock()
+        if preciseClock and kernel.QueryPerformanceCounter(counter) ~= 0 then
+            return tonumber(counter[0]) / tonumber(frequency[0])
         end
-    end)(method, url, args)
-    resolve = resolve or function() end
-    reject  = reject  or function() end
-    lua_thread.create(function()
-        local runner = request_thread
-        while true do
-            local status, err = runner:status()
-            if not err then
-                if status == "completed" then
-                    local result, response = runner:get()
-                    -- Defer off the polling coroutine: queue, main() runs it.
-                    if result then
-                        queueHttpCallback(function() resolve(response) end)
-                    else
-                        queueHttpCallback(function() reject(response) end)
-                    end
-                    return
-                elseif status == "canceled" then
-                    queueHttpCallback(function() reject(status) end)
-                    return
-                end
-            else
-                queueHttpCallback(function() reject(err) end)
-                return
-            end
+        return os.clock()
+    end
+    -- Один проход не занимает весь кадр; проверка путей также отдаёт управление.
+    local sliceDeadline = clock() + 0.002
+    local function checkpoint(force)
+        if force or clock() >= sliceDeadline then
             wait(0)
+            sliceDeadline = clock() + 0.002
         end
+    end
+    local cryptoLoaded, crypto = pcall(ffi.load, "advapi32")
+    local nativeWarningShown = false
+    local function nativeSha256()
+        if not cryptoLoaded then return nil, tostring(crypto) end
+        local provider, hash = ffi.new("uintptr_t[1]"), ffi.new("uintptr_t[1]")
+        -- PROV_RSA_AES / CRYPT_VERIFYCONTEXT: без ключей и записи в хранилище Windows.
+        if crypto.CryptAcquireContextW(provider, nil, nil, 24, 0xF0000000) == 0 then
+            return nil, "CryptAcquireContextW: " .. tonumber(kernel.GetLastError())
+        end
+        if crypto.CryptCreateHash(provider[0], 0x800C, 0, 0, hash) == 0 then -- CALG_SHA_256
+            local err = "CryptCreateHash: " .. tonumber(kernel.GetLastError())
+            crypto.CryptReleaseContext(provider[0], 0)
+            return nil, err
+        end
+        -- На случай выгрузки скрипта, пока корутина уступила кадр.
+        ffi.gc(hash, function(value)
+            crypto.CryptDestroyHash(value[0])
+            crypto.CryptReleaseContext(provider[0], 0)
+        end)
+        local closed = false
+        local function close()
+            if closed then return end
+            closed = true
+            ffi.gc(hash, nil)
+            crypto.CryptDestroyHash(hash[0])
+            crypto.CryptReleaseContext(provider[0], 0)
+        end
+        return function(data)
+            if crypto.CryptHashData(hash[0], data, #data, 0) == 0 then
+                error("CryptHashData: " .. tonumber(kernel.GetLastError()))
+            end
+        end, function()
+            local bytes, size = ffi.new("unsigned char[32]"), ffi.new("unsigned long[1]", 32)
+            if crypto.CryptGetHashParam(hash[0], 2, bytes, size, 0) == 0 or size[0] ~= 32 then
+                error("CryptGetHashParam: " .. tonumber(kernel.GetLastError()))
+            end
+            local result = {}
+            for i = 0, 31 do result[i + 1] = string.format("%02x", tonumber(bytes[i])) end
+            return table.concat(result)
+        end, close
+    end
+    local band, bxor, bnot, rshift, ror, tobit = bit.band, bit.bxor, bit.bnot, bit.rshift, bit.ror, bit.tobit
+    local shaConstants = {
+        0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+        0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+        0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+        0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+        0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+        0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+        0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+        0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2,
+    }
+    local function sha256()
+        local h = {0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19}
+        local tail, length, w = "", 0, {}
+        local function update(data)
+            length = length + #data
+            data = tail .. data
+            local finish = #data - #data % 64
+            for offset = 1, finish, 64 do
+                for i = 0, 15 do
+                    local a,b,c,d = data:byte(offset + i * 4, offset + i * 4 + 3)
+                    w[i] = tobit(a * 16777216 + b * 65536 + c * 256 + d)
+                end
+                for i = 16, 63 do
+                    local a,b = w[i-15], w[i-2]
+                    w[i] = tobit(w[i-16] + bxor(ror(a,7),ror(a,18),rshift(a,3)) + w[i-7]
+                        + bxor(ror(b,17),ror(b,19),rshift(b,10)))
+                end
+                local a,b,c,d,e,f,g,k = unpack(h)
+                for i = 0, 63 do
+                    local t1 = tobit(k + bxor(ror(e,6),ror(e,11),ror(e,25))
+                        + bxor(band(e,f),band(bnot(e),g)) + shaConstants[i+1] + w[i])
+                    local t2 = tobit(bxor(ror(a,2),ror(a,13),ror(a,22)) + bxor(band(a,b),band(a,c),band(b,c)))
+                    k,g,f,e,d,c,b,a = g,f,e,tobit(d+t1),c,b,a,tobit(t1+t2)
+                end
+                local values = {a,b,c,d,e,f,g,k}
+                for i = 1, 8 do h[i] = tobit(h[i] + values[i]) end
+            end
+            tail = data:sub(finish + 1)
+        end
+        -- Компиляция горячего цикла сама может задержать кадр. Резервный путь
+        -- работает небольшими порциями в интерпретаторе, не меняя JIT остального скрипта.
+        jit.off(update, true)
+        local function pack32(value)
+            return string.char(band(rshift(value,24),255),band(rshift(value,16),255),band(rshift(value,8),255),band(value,255))
+        end
+        return update, function()
+            local bytes = length
+            update("\128" .. string.rep("\0", (55 - bytes) % 64)
+                .. pack32(math.floor(bytes / 536870912)) .. pack32(bytes * 8))
+            local result = {}
+            for i = 1, 8 do result[i] = bit.tohex(h[i]) end
+            return table.concat(result)
+        end
+    end
+    local function path(relative) return manager.root .. "\\" .. relative:gsub("/", "\\") end
+    local function say(message, errorMessage)
+        sampAddChatMessage("[checklogs] " .. message, errorMessage and ERROR_COLOR or CHAT_COLOR)
+    end
+    local function mkdir(relative)
+        local current = manager.root
+        for part in relative:gmatch("[^/\\]+") do
+            assert(part ~= "..", "Недопустимый путь")
+            current = current .. "\\" .. part
+            if not doesDirectoryExist(current) then
+                createDirectory(current)
+                assert(doesDirectoryExist(current), "Не удалось создать " .. current)
+            end
+        end
+    end
+    local function readFile(filename)
+        local file = io.open(filename, "rb")
+        if not file then return nil end
+        local data = file:read("*a")
+        file:close()
+        return data
+    end
+    local function writeFile(filename, data)
+        local file = assert(io.open(filename, "wb"))
+        local ok, err = file:write(data)
+        local closed, closeError = file:close()
+        assert(ok and closed, err or closeError or "Ошибка записи")
+    end
+    local function hashFile(filename)
+        local file, err = io.open(filename, "rb")
+        if not file then return nil, err end
+        local update, finish, release = nativeSha256()
+        local native = update ~= nil
+        if not native then
+            if not nativeWarningShown then
+                print("[checklogs] Native SHA256 unavailable; cooperative Lua fallback: " .. tostring(finish))
+                nativeWarningShown = true
+            end
+            update, finish = sha256()
+        end
+        local ok, result = pcall(function()
+            while true do
+                local chunk, readError = file:read(65536)
+                if not chunk then
+                    if readError then error(readError) end
+                    return finish()
+                end
+                if native then
+                    update(chunk)
+                    checkpoint(false)
+                else
+                    for offset = 1, #chunk, 1024 do
+                        update(chunk:sub(offset, offset + 1023))
+                        checkpoint(false)
+                    end
+                end
+            end
+        end)
+        file:close()
+        if release then release() end
+        checkpoint(false)
+        if not ok then return nil, tostring(result) end
+        return result
+    end
+    local function newStage()
+        local relative
+        repeat
+            manager.serial = manager.serial + 1
+            relative = stateDir .. "/" .. os.time() .. "-" .. manager.pid .. "-" .. manager.serial
+        until not doesDirectoryExist(path(relative))
+        mkdir(relative)
+        return relative
+    end
+    local function fetch(entry, stage)
+        local relative = stage .. "/" .. entry.path
+        mkdir(relative:match("^(.*)/[^/]+$"))
+        local filename = path(relative)
+        local temporary = filename .. ".part"
+        local finished, received = false, false
+        local started, err = pcall(downloadUrlToFile, rootUrl .. entry.path, temporary, function(_, status)
+            if status == 6 then received = true end -- MoonLoader STATUS_ENDDOWNLOADDATA
+            if status == 58 then finished = true end -- STATUSEX_ENDDOWNLOAD
+        end)
+        if not started then return nil, err end
+        local deadline = os.time() + DOWNLOAD_DEADLINE
+        while not finished and os.time() < deadline do wait(100) end
+        if not finished or not received then return nil, "Загрузка не завершена" end
+        local file = io.open(temporary, "rb")
+        local size = file and file:seek("end")
+        if file then file:close() end
+        if size ~= entry.size then return nil, "Размер файла не совпал с эталоном" end
+        local actual, hashError = hashFile(temporary)
+        if actual ~= entry.sha256 then return nil, hashError or "SHA256 не совпал с эталоном" end
+        local moved, moveError = os.rename(temporary, filename)
+        if not moved then return nil, moveError end
+        return filename
+    end
+    local function findModule(name)
+        local function find(patterns, module)
+            module = module:gsub("%.", "/")
+            for template in patterns:gmatch("[^;]+") do
+                local filename = template:gsub("%?", module)
+                if doesFileExist(filename) then return filename end
+            end
+        end
+        if package.preload[name] then return nil, "package.preload" end
+        return find(package.path, name) or find(package.cpath, name)
+            or name:find("%.") and find(package.cpath, name:match("^[^.]+")) or nil
+    end
+    function manager:scan(verbose)
+        local rows, report, cached = {}, {"checklogs " .. SCRIPT_VERSION .. "; bundle " .. LIBRARY_BUNDLE,
+            "Built-in: LuaJIT bit/ffi; MoonLoader inicfg/memory. Hashes below describe files on disk."}, {}
+        local counts = {ok=0, missing=0, different=0, error=0, shadow=0}
+        local function hash(filename)
+            local key = filename:gsub("\\", "/"):lower()
+            if not cached[key] then cached[key] = {hashFile(filename)} end
+            return unpack(cached[key])
+        end
+        local ready = true
+        for _, entry in ipairs(LIBRARY_FILES) do
+            local actual, err = hash(path(entry.path))
+            local state = actual and (actual == entry.sha256 and "ok" or "different")
+                or (doesFileExist(path(entry.path)) and "error" or "missing")
+            rows[#rows + 1] = {entry=entry, state=state, actual=actual}
+            counts[state] = counts[state] + 1
+            if (state == "missing" or state == "error") and not entry.gui then ready = false end
+            report[#report + 1] = state:upper() .. " " .. path(entry.path) .. "\n expected=" .. entry.sha256
+                .. "\n actual=" .. (actual or tostring(err))
+            for _, module in ipairs(entry.modules) do
+                local resolved, special = findModule(module)
+                report[#report + 1] = " require " .. module .. " -> " .. (resolved or special or "NOT FOUND")
+                if resolved then
+                    local loadedHash = hash(resolved)
+                    if loadedHash ~= entry.sha256 and resolved:gsub("\\", "/"):lower() ~= path(entry.path):gsub("\\", "/"):lower() then
+                        counts.shadow = counts.shadow + 1
+                        report[#report + 1] = " SHADOW SHA256=" .. tostring(loadedHash)
+                    end
+                elseif special then
+                    counts.shadow = counts.shadow + 1
+                elseif state ~= "missing" and not entry.gui then
+                    ready = false
+                    counts.error = counts.error + 1
+                end
+            end
+            checkpoint(true)
+        end
+        report[#report + 1] = "SHA256 backend: " .. (nativeWarningShown and "cooperative Lua fallback" or "Windows CryptoAPI")
+        local saved, saveError = pcall(function()
+            mkdir(stateDir)
+            writeFile(path(stateDir .. "/report.txt"), table.concat(report, "\r\n") .. "\r\n")
+        end)
+        if not saved then
+            say("Не удалось сохранить отчёт библиотек. Подробности в moonloader.log.", true)
+            print("[checklogs] Libraries report: " .. tostring(saveError) .. "\n" .. table.concat(report, "\n"))
+        end
+        self.rows, self.counts, self.ready = rows, counts, ready
+        if verbose or counts.different + counts.error + counts.shadow > 0 then
+            say(string.format("Библиотеки: эталон %d, нет %d, отличаются %d, ошибки %d.", counts.ok, counts.missing, counts.different, counts.error))
+            if counts.different > 0 then say("Для замены отличающихся библиотек: /updatelibs") end
+            if counts.shadow > 0 then say("Обнаружены нестандартные загрузчики/пути модулей. См. config/checklogs-libraries/report.txt", true) end
+            if verbose or counts.error > 0 then say("Полный список и SHA256: config/checklogs-libraries/report.txt") end
+        end
+        return rows
+    end
+    function manager:repairMissing(verbose)
+        local rows = self:scan(verbose)
+        local stage, changed
+        for _, row in ipairs(rows) do
+            if row.state == "missing" then
+                stage = stage or newStage()
+                say("Скачиваю отсутствующую библиотеку: " .. row.entry.path)
+                local filename, err = fetch(row.entry, stage)
+                if not filename then
+                    say("Не удалось скачать " .. row.entry.path .. ". Подробности в moonloader.log.", true)
+                    print("[checklogs] Libraries download: " .. tostring(err) .. "; " .. rootUrl .. row.entry.path)
+                    break
+                end
+                mkdir(row.entry.path:match("^(.*)/[^/]+$"))
+                -- За время запроса файл мог установить другой скрипт: не заменяем его автоматически.
+                if not doesFileExist(path(row.entry.path)) then
+                    local ok, moveError = os.rename(filename, path(row.entry.path))
+                    if not ok then say("Не удалось установить " .. row.entry.path, true); print(tostring(moveError)); break end
+                    changed = true
+                end
+            end
+        end
+        if stage then self:scan(true) end
+        if changed then say("Отсутствующие библиотеки установлены; SHA256 проверены.") end
+        return self.ready
+    end
+    local function wide(text)
+        local count = kernel.MultiByteToWideChar(0, 0, text, #text, nil, 0)
+        assert(count > 0, "Не удалось преобразовать путь Windows")
+        local buffer = ffi.new("wchar_t[?]", count + 1)
+        assert(kernel.MultiByteToWideChar(0, 0, text, #text, buffer, count) == count)
+        return buffer
+    end
+    local function launch(stage)
+        local function quote(value)
+            assert(not value:find('["%z]'), "Недопустимый путь Windows")
+            return '"' .. value .. '"'
+        end
+        local executable = (os.getenv("SystemRoot") or "C:\\Windows") .. "\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+        local arguments = "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "
+            .. quote(path(stage .. "/" .. LIBRARY_UPDATER.path)) .. " -Root " .. quote(manager.root)
+            .. " -Stage " .. quote(path(stage)) .. " -GameProcessId " .. manager.pid
+        local result = ffi.load("shell32").ShellExecuteW(nil, wide("open"), wide(executable), wide(arguments), wide(manager.root), 0)
+        assert(tonumber(result) > 32, "Не удалось запустить установщик: " .. tonumber(result))
+    end
+    function manager:pending()
+        local id = readFile(path(stateDir .. "/pending.txt"))
+        if not id or not id:match("^%d+%-%d+%-%d+$") then return true end
+        local stage = stateDir .. "/" .. id
+        local owner = tonumber(readFile(path(stage .. "/owner.txt")))
+        local deadline = os.time() + DOWNLOAD_DEADLINE
+        local status = readFile(path(stage .. "/status.txt"))
+        if owner ~= self.pid and (status == "WAITING" or status == "APPLYING" or status == "STARTING") then
+            say("Завершается установка библиотек после выхода из предыдущего процесса GTA...")
+            repeat
+                wait(100)
+                status = readFile(path(stage .. "/status.txt"))
+            until status == "OK" or status == "FAILED" or status == "ROLLBACK_FAILED" or os.time() >= deadline
+        end
+        if status == "OK" then
+            self.updateQueued = false
+            say("Библиотеки обновлены. Резервные копии: " .. stage .. "/backup")
+            os.remove(path(stateDir .. "/pending.txt"))
+        elseif status == "FAILED" or status == "ROLLBACK_FAILED" then
+            self.updateQueued = false
+            say("Обновление библиотек не завершено. См. " .. stage .. "/update.log", true)
+            if status == "ROLLBACK_FAILED" then return false end
+            os.remove(path(stateDir .. "/pending.txt"))
+        elseif owner == self.pid then
+            self.updateQueued = true
+            say("Обновление подготовлено: выйдите из GTA и дождитесь status.txt = OK перед запуском.")
+        else
+            say("Установщик ещё не завершился. Проверьте " .. stage .. "/status.txt", true)
+            return false
+        end
+        return true
+    end
+    function manager:update()
+        if self.updateQueued then say("Обновление уже подготовлено. Полностью выйдите из GTA."); return end
+        local rows = self:scan(false)
+        local stage, plan = nil, {}
+        for _, row in ipairs(rows) do
+            if row.state == "error" then error("Не удалось прочитать " .. row.entry.path) end
+            if row.state ~= "ok" then
+                stage = stage or newStage()
+                say("Подготавливаю эталон: " .. row.entry.path)
+                local filename, err = fetch(row.entry, stage)
+                assert(filename, row.entry.path .. ": " .. tostring(err))
+                plan[#plan + 1] = row.entry.path .. "\t" .. row.entry.sha256 .. "\t" .. (row.actual or "-")
+            end
+        end
+        if #plan == 0 then say("Все контролируемые файлы уже соответствуют эталону."); return end
+        local helper, err = fetch(LIBRARY_UPDATER, stage)
+        assert(helper, "Установщик: " .. tostring(err))
+        writeFile(path(stage .. "/plan.tsv"), table.concat(plan, "\n") .. "\n")
+        writeFile(path(stage .. "/owner.txt"), tostring(self.pid))
+        writeFile(path(stage .. "/status.txt"), "STARTING")
+        writeFile(path(stateDir .. "/pending.txt"), stage:match("([^/]+)$"))
+        local started, launchError = pcall(launch, stage)
+        if not started then
+            writeFile(path(stage .. "/status.txt"), "FAILED")
+            os.remove(path(stateDir .. "/pending.txt"))
+            error(launchError)
+        end
+        self.updateQueued = true
+        say("Проверено файлов к замене: " .. #plan .. ". Установка начнётся после полного выхода из GTA.")
+        say("Перед запуском игры дождитесь OK в " .. stage .. "/status.txt")
+        print("[checklogs] Library update stage: " .. path(stage))
+    end
+    function manager:registerCommands()
+        local function schedule(update, args)
+            if args and args:find("%S") then say(update and "Введите /updatelibs" or "Введите /checklibs"); return end
+            if self.busy then say("Проверка/загрузка библиотек уже выполняется."); return end
+            self.busy = true
+            local created, createError = pcall(lua_thread.create, function()
+                local ok, err = pcall(function()
+                    if not self:pending() then return end
+                    if update then self:update() else self:repairMissing(true) end
+                end)
+                self.busy = false
+                if not ok then say("Ошибка обслуживания библиотек. Подробности в moonloader.log.", true); print("[checklogs] Libraries: " .. tostring(err)) end
+            end)
+            if not created then self.busy = false; say("Не удалось запустить проверку библиотек.", true); print(tostring(createError)) end
+        end
+        pcall(sampUnregisterChatCommand, "checklibs")
+        pcall(sampUnregisterChatCommand, "updatelibs")
+        sampRegisterChatCommand("checklibs", function(args) schedule(false, args) end)
+        sampRegisterChatCommand("updatelibs", function(args) schedule(true, args) end)
+    end
+    function manager:bootstrap()
+        self.busy = true
+        local ok, result = pcall(function()
+            if not self:pending() then return false end
+            return self:repairMissing(false)
+        end)
+        self.busy = false
+        if not ok then say("Ошибка проверки библиотек. Доступны /checklibs и /updatelibs.", true); print("[checklogs] Libraries: " .. tostring(result)) end
+        if not ok or not result then self.ready = false; say("Не все библиотеки доступны. Повторить загрузку: /checklibs", true) end
+    end
+    return manager
+end
+-- END LIBRARY MANAGER
+
+local rankToField = {
+    ["Рядовой [1]"] = "r1",
+    ["Ефрейтор [2]"] = "r2",
+    ["Младший сержант [3]"] = "r3",
+    ["Сержант [4]"] = "r4",
+    ["Старший сержант [5]"] = "r5",
+    ["Старшина [6]"] = "r6",
+    ["Прапорщик [7]"] = "r7",
+    ["Младший лейтенант [8]"] = "r8",
+    ["Лейтенант [9]"] = "r9",
+    ["Старший лейтенант [10]"] = "r10",
+    ["Капитан [11]"] = "r11",
+    ["Майор [12]"] = "r12",
+    ["Подполковник [13]"] = "r13",
+    ["Полковник [14]"] = "r14",
+    ["Генерал [15]"] = "r15",
+}
+local sergeantRanks = {
+    ["Младший сержант [3]"] = true,
+    ["Сержант [4]"] = true,
+    ["Старший сержант [5]"] = true,
+}
+
+local function chat(text)
+    sampAddChatMessage(text, CHAT_COLOR)
+end
+
+local function reportError(context, err)
+    sampAddChatMessage("[checklogs] " .. context .. ": ошибка. Подробности в moonloader.log.", ERROR_COLOR)
+    print("[checklogs] " .. context .. ": " .. tostring(err))
+end
+
+local function trim(text)
+    return text:match("^%s*(.-)%s*$")
+end
+
+local function splitArgs(text)
+    local args = {}
+    for arg in (text or ""):gmatch("%S+") do
+        args[#args + 1] = arg
+    end
+    return args
+end
+
+local function getPlayerId(text)
+    local id = tonumber(text)
+    if id and id % 1 == 0 and id >= 0 and id <= MAX_PLAYER_ID then
+        return id
+    end
+end
+
+local function resolveNickname(arg)
+    if tonumber(arg) then
+        local id = getPlayerId(arg)
+        if not id then
+            chat("Некорректный ID игрока!")
+            return nil
+        end
+        if not sampIsPlayerConnected(id) then
+            chat("Игрок оффлайн!")
+            return nil
+        end
+        return sampGetPlayerNickname(id)
+    end
+    return arg
+end
+
+local function commandNickname(text, command)
+    local args = splitArgs(text)
+    if #args ~= 1 then
+        chat("Введите: /" .. command .. " [id / nick]")
+        return nil
+    end
+    return resolveNickname(args[1])
+end
+
+local function lookupNickname(arg)
+    if #arg > 24 or arg:find("[%z\1-\31\127]") then
+        chat("Ник должен содержать не более 24 символов и не содержать управляющих символов!")
+        return nil
+    end
+    return resolveNickname(arg)
+end
+
+local function urlEncode(text)
+    return (text:gsub("[^A-Za-z0-9_.~-]", function(char)
+        return string.format("%%%02X", char:byte())
+    end))
+end
+
+local function displayText(value)
+    if value == nil or value == json.null or value == "" then
+        return "Отсутствует"
+    end
+    return fromUtf8(tostring(value))
+end
+
+local function getSrok(rank)
+    local field = rankToField[rank]
+    return tonumber(field and mainIni.sroks[field] or mainIni.sroks.r0) or -1
+end
+
+local function addDaysToDateString(dateString, daysToAdd)
+    if daysToAdd == -1 then return "Нет срока" end
+    if type(dateString) ~= "string" then return "Неизвестно" end
+    local day, month, year, hour, minute = dateString:match("^(%d%d)%.(%d%d)%.(%d+) (%d%d):(%d%d)$")
+    day, month, year = tonumber(day), tonumber(month), tonumber(year)
+    hour, minute = tonumber(hour), tonumber(minute)
+    if not year or day < 1 or day > 31 or month < 1 or month > 12 or hour > 23 or minute > 59 then
+        return "Неизвестно"
+    end
+    if year < 100 then year = year + 2000 end
+    local ok, timestamp = pcall(os.time, {year = year, month = month, day = day, hour = hour, min = minute, sec = 0})
+    if not ok or not timestamp then return "Неизвестно" end
+    local dateOk, date = pcall(os.date, "*t", timestamp + daysToAdd * 86400)
+    if not dateOk or not date then return "Неизвестно" end
+    return string.format("%02d.%02d.%d", date.day, date.month, date.year)
+end
+
+-- Модель отчёта не зависит от ImGui. UTF-8 хранится отдельно от старого CP1251-чата.
+local registryView = {visible = false}
+
+local function cleanUtf8(text)
+    local parts, i = {}, 1
+    while i <= #text do
+        local first = text:byte(i)
+        local size = first < 128 and 1 or first >= 194 and first <= 223 and 2
+            or first >= 224 and first <= 239 and 3 or first >= 240 and first <= 244 and 4 or 0
+        local valid = size > 0 and i + size - 1 <= #text
+        for j = 1, size - 1 do
+            local byte = text:byte(i + j)
+            if not byte or byte < 128 or byte > 191 then valid = false end
+        end
+        local second = text:byte(i + 1) or 0
+        if (first == 224 and second < 160) or (first == 237 and second > 159)
+            or (first == 240 and second < 144) or (first == 244 and second > 143) then valid = false end
+        if valid then
+            parts[#parts + 1] = size == 1 and (first == 0 or first < 32 and first ~= 10 and first ~= 9) and " " or text:sub(i, i + size - 1)
+            i = i + size
+        else
+            parts[#parts + 1] = "\239\191\189"
+            i = i + 1
+        end
+    end
+    return table.concat(parts)
+end
+
+local function uiValue(value)
+    if value == nil or value == json.null or value == "" then return u8("Отсутствует") end
+    return cleanUtf8(tostring(value))
+end
+
+local function foldSearch(text)
+    -- ASCII и русская кириллица без преобразования UTF-8 данных в CP1251.
+    return (text:lower():gsub("\208([\144-\175])", function(char)
+        local byte = char:byte()
+        return byte <= 159 and "\208" .. string.char(byte + 32) or "\209" .. string.char(byte - 32)
+    end):gsub("\208\129", "\209\145"))
+end
+
+local function prepareRecord(record)
+    local searchable = {record.title, record.date}
+    local clipboard = {record.title, u8("Дата: ") .. record.date}
+    for _, field in ipairs(record.fields) do
+        searchable[#searchable + 1] = field[2]
+        clipboard[#clipboard + 1] = field[1] .. ": " .. field[2]
+    end
+    record.search = foldSearch(table.concat(searchable, "\n"))
+    record.clipboard = table.concat(clipboard, "\n")
+    record.lines = {}
+    for _, field in ipairs(record.fields) do record.lines[#record.lines + 1] = field[1] .. ": " .. field[2] end
+    return record
+end
+
+local function newestFirst(records)
+    local function dateKey(text)
+        local d, m, y = text:match("^(%d%d)%.(%d%d)%.(%d%d%d%d)$")
+        if not y then return -1 end
+        d, m, y = tonumber(d), tonumber(m), tonumber(y)
+        local days = {31, (y % 4 == 0 and (y % 100 ~= 0 or y % 400 == 0)) and 29 or 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}
+        if not days[m] or d < 1 or d > days[m] then return -1 end
+        return y * 10000 + m * 100 + d
+    end
+    for i, record in ipairs(records) do record.order, record.dateKey = i, dateKey(record.date) end
+    table.sort(records, function(a, b)
+        if a.dateKey ~= b.dateKey then return a.dateKey > b.dateKey end
+        return a.order > b.order -- При одной дате более поздняя строка реестра выше.
     end)
 end
 
--- ============================================================
--- AES-челлендж
--- ============================================================
-
-local function hex2bytes(hex)
-    local bytes = {}
-    for i = 1, #hex, 2 do
-        bytes[#bytes + 1] = tonumber(hex:sub(i, i + 1), 16)
+local function validRecords(records, fields, rawArray)
+    if type(records) ~= "table" then return false end
+    local count, max = 0, 0
+    for key in pairs(records) do
+        if type(key) ~= "number" or key < 1 or key % 1 ~= 0 then return false end
+        count, max = count + 1, math.max(max, key)
     end
+    if count ~= max then return false end
+    if rawArray then
+        if not rawArray:match("^%s*%[") then return false end
+        -- json.lua превращает null в nil. Сверяем число элементов, чтобы [null]
+        -- не стало «история пуста», а хвостовой null не потерялся незаметно.
+        local expected, depth, quoted, escaped = rawArray:match("^%s*%[%s*%]%s*$") and 0 or 1, 0, false, false
+        local expectObject = true
+        for i = 1, #rawArray do
+            local c = rawArray:sub(i, i)
+            if not quoted and depth == 1 and expectObject and c ~= "]" and not c:match("%s") then
+                if c ~= "{" then return false end
+                expectObject = false
+            end
+            if quoted then
+                if escaped then escaped = false elseif c == "\\" then escaped = true elseif c == '"' then quoted = false end
+            elseif c == '"' then quoted = true
+            elseif c == "[" or c == "{" then depth = depth + 1
+            elseif c == "]" or c == "}" then depth = depth - 1
+            elseif c == "," and depth == 1 then expected, expectObject = expected + 1, true end
+        end
+        if count ~= expected then return false end
+    end
+    for i = 1, count do
+        local item = records[i]
+        if type(item) ~= "table" then return false end
+        for _, key in ipairs(fields) do
+            local value = item[key]
+            if value ~= nil and value ~= json.null and type(value) ~= "string" and type(value) ~= "number" then return false end
+        end
+    end
+    return true
+end
+
+local function initializeRegistryView()
+    if registryView.initialized then return end
+    -- Загружается только для режима 1: неисправный/отсутствующий mimgui не ломает чат.
+    local imgui = require "mimgui"
+    local ffi = require "ffi"
+    local bit = require "bit"
+    local view = registryView
+    local search = imgui.new.char[256]()
+    local darkTheme = imgui.new.bool(mainIni.interface.dark_theme == true)
+    local palettes = {light = {
+        text = imgui.ImVec4(0.10, 0.15, 0.22, 1), muted = imgui.ImVec4(0.31, 0.37, 0.45, 1),
+        accent = imgui.ImVec4(0.16, 0.29, 0.66, 1), amber = imgui.ImVec4(0.59, 0.28, 0.06, 1),
+        red = imgui.ImVec4(0.72, 0.14, 0.17, 1), background = imgui.ImVec4(0.93, 0.945, 0.96, 1),
+        panel = imgui.ImVec4(1, 1, 1, 1), border = imgui.ImVec4(0.77, 0.80, 0.85, 1),
+        hover = imgui.ImVec4(0.85, 0.89, 0.97, 1), selected = imgui.ImVec4(0.75, 0.82, 0.95, 1),
+    }, dark = {
+        text = imgui.ImVec4(0.92, 0.94, 0.98, 1), muted = imgui.ImVec4(0.66, 0.72, 0.81, 1),
+        accent = imgui.ImVec4(0.49, 0.69, 1, 1), amber = imgui.ImVec4(1, 0.75, 0.40, 1),
+        red = imgui.ImVec4(1, 0.48, 0.51, 1), background = imgui.ImVec4(0.075, 0.09, 0.12, 1),
+        panel = imgui.ImVec4(0.115, 0.14, 0.18, 1), border = imgui.ImVec4(0.25, 0.30, 0.38, 1),
+        hover = imgui.ImVec4(0.19, 0.25, 0.35, 1), selected = imgui.ImVec4(0.27, 0.37, 0.53, 1),
+    }}
+    local colors
+    local packed = {}
+    local scale, bodyFont, headingFont, recordFont = 1
+    local theme = {
+        {imgui.Col.Text, "text"}, {imgui.Col.TextDisabled, "muted"},
+        {imgui.Col.WindowBg, "background"}, {imgui.Col.ChildBg, "background"},
+        {imgui.Col.Border, "border"}, {imgui.Col.FrameBg, "panel"},
+        {imgui.Col.FrameBgHovered, "hover"}, {imgui.Col.FrameBgActive, "selected"},
+        {imgui.Col.Button, "hover"}, {imgui.Col.ButtonHovered, "selected"},
+        {imgui.Col.ButtonActive, "selected"}, {imgui.Col.TextSelectedBg, "selected"},
+        {imgui.Col.ScrollbarBg, "background"}, {imgui.Col.ScrollbarGrab, "muted"},
+        {imgui.Col.ScrollbarGrabHovered, "muted"}, {imgui.Col.ScrollbarGrabActive, "accent"},
+        {imgui.Col.CheckMark, "accent"}, {imgui.Col.Separator, "border"},
+    }
+    local windowFlags = bit.bor(imgui.WindowFlags.NoTitleBar, imgui.WindowFlags.NoResize,
+        imgui.WindowFlags.NoCollapse, imgui.WindowFlags.NoSavedSettings, imgui.WindowFlags.NoScrollbar)
+
+    local function text(value, color, heading, wrap)
+        if heading and headingFont then imgui.PushFont(headingFont) end
+        if color then imgui.PushStyleColor(imgui.Col.Text, color) end
+        imgui.PushTextWrapPos(wrap or 0)
+        imgui.TextUnformatted(value) -- Не передаём сетевой текст как printf-формат.
+        imgui.PopTextWrapPos()
+        if color then imgui.PopStyleColor() end
+        if heading and headingFont then imgui.PopFont() end
+    end
+
+    local function gap(height)
+        imgui.Dummy(imgui.ImVec2(0, height * scale))
+    end
+
+    local function checkValue(check, kind)
+        if not check or check.state == "not_applicable" then return u8("Не требуется"), colors.muted end
+        if check.state == "waiting" then return u8("Ожидает логов"), colors.muted end
+        if check.state == "unavailable" then return u8("Не проверено"), colors.muted end
+        if check.state == "loading" then return u8("Проверяется..."), colors.amber end
+        if check.state == "error" then return u8("Не удалось проверить"), colors.red end
+        if check.state == "none" then
+            return kind == "warnings" and u8("Не обнаружены") or u8("Нет контракта"), colors.accent
+        end
+        return u8("До ") .. check.value, kind == "warnings" and colors.red or colors.accent
+    end
+
+    local function rebuildFilter(report)
+        local query = foldSearch(ffi.string(search))
+        if view.filterQuery == query and view.filterRecords == report.records then return end
+        view.filterQuery, view.filterRecords, view.filtered = query, report.records, {}
+        for i, record in ipairs(report.records) do
+            if query == "" or record.search:find(query, 1, true) then
+                view.filtered[#view.filtered + 1] = i
+            end
+        end
+        view.resetScroll, view.copied = true, nil
+    end
+
+    local function measure(value, font, width)
+        if font then imgui.PushFont(font) end
+        local height = imgui.CalcTextSize(value, nil, false, width).y
+        if font then imgui.PopFont() end
+        return math.ceil(height)
+    end
+
+    local function recordLayout(record, width)
+        if record.layout and record.layout.width == width then return record.layout end
+        local padding, spacing = 18 * scale, 6 * scale
+        local layout = {width = width, blocks = {}, header = math.max(32 * scale,
+            measure("000   /   " .. record.date, nil, math.max(40, width - padding * 2 - 170 * scale)))}
+        local y = padding + layout.header + spacing
+        local function add(value, font, color)
+            local height = measure(value, font, width - padding * 2)
+            layout.blocks[#layout.blocks + 1] = {text = value, font = font, color = color, y = y}
+            y = y + height + spacing
+        end
+        add(record.title, recordFont, "accent")
+        for _, line in ipairs(record.lines) do add(line, nil, "text") end
+        layout.height = math.ceil(y + padding - spacing)
+        record.layout = layout
+        return layout
+    end
+
+    local function drawRecord(record, index, width)
+        local layout = recordLayout(record, width)
+        local start, screen = imgui.GetCursorPos(), imgui.GetCursorScreenPos()
+        imgui.Dummy(imgui.ImVec2(width, layout.height))
+        local after = imgui.GetCursorPos()
+        -- Карточки имеют разную высоту. Пропускаем отрисовку невидимых, сохраняя прокрутку.
+        if imgui.IsItemVisible() then
+            local draw, padding = imgui.GetWindowDrawList(), 18 * scale
+            draw:AddRectFilled(screen, imgui.ImVec2(screen.x + width, screen.y + layout.height), packed.panel, 8 * scale)
+            draw:AddRect(screen, imgui.ImVec2(screen.x + width, screen.y + layout.height), packed.border, 8 * scale)
+            draw:AddLine(imgui.ImVec2(screen.x + 1, screen.y + 14 * scale),
+                imgui.ImVec2(screen.x + 1, screen.y + layout.height - 14 * scale), packed.accent, 3 * scale)
+            local x = start.x + padding
+            imgui.SetCursorPos(imgui.ImVec2(x, start.y + padding))
+            imgui.PushStyleColor(imgui.Col.Text, colors.muted)
+            imgui.PushTextWrapPos(start.x + width - padding - 170 * scale)
+            imgui.TextUnformatted(string.format("%02d   /   %s", index, record.date))
+            imgui.PopTextWrapPos()
+            imgui.PopStyleColor()
+            imgui.SetCursorPos(imgui.ImVec2(start.x + width - padding - 150 * scale, start.y + padding - 3 * scale))
+            local copied = view.copied == index and imgui.GetTime() < (view.copiedUntil or 0)
+            if imgui.Button((copied and u8("Скопировано") or u8("Копировать")) .. "##copy" .. index, imgui.ImVec2(150 * scale, 30 * scale)) then
+                imgui.SetClipboardText(record.clipboard)
+                view.copied, view.copiedUntil = index, imgui.GetTime() + 2
+            end
+            for _, block in ipairs(layout.blocks) do
+                imgui.SetCursorPos(imgui.ImVec2(x, start.y + block.y))
+                if block.font then imgui.PushFont(block.font) end
+                imgui.PushStyleColor(imgui.Col.Text, colors[block.color])
+                imgui.PushTextWrapPos(start.x + width - padding)
+                imgui.TextUnformatted(block.text)
+                imgui.PopTextWrapPos()
+                imgui.PopStyleColor()
+                if block.font then imgui.PopFont() end
+            end
+            imgui.SetCursorPos(after)
+        end
+        gap(10)
+    end
+
+    local function drawReport()
+        local report = view.report
+        local io = imgui.GetIO()
+        local palette = darkTheme[0] and palettes.dark or palettes.light
+        if colors ~= palette then
+            colors = palette
+            for name, color in pairs(colors) do packed[name] = imgui.ColorConvertFloat4ToU32(color) end
+        end
+        local width, height = math.min(1140 * scale, io.DisplaySize.x - 24), math.min(880 * scale, io.DisplaySize.y - 24)
+        imgui.SetNextWindowSize(imgui.ImVec2(width, height), imgui.Cond.Always)
+        if view.center then
+            imgui.SetNextWindowPos(imgui.ImVec2(io.DisplaySize.x / 2, io.DisplaySize.y / 2), imgui.Cond.Always, imgui.ImVec2(0.5, 0.5))
+            imgui.SetNextWindowFocus()
+            view.center = false
+        end
+        for _, item in ipairs(theme) do imgui.PushStyleColor(item[1], colors[item[2]]) end
+        imgui.PushStyleVarFloat(imgui.StyleVar.WindowRounding, 10 * scale)
+        imgui.PushStyleVarFloat(imgui.StyleVar.ChildRounding, 0)
+        imgui.PushStyleVarFloat(imgui.StyleVar.FrameRounding, 6 * scale)
+        imgui.PushStyleVarFloat(imgui.StyleVar.WindowBorderSize, 1)
+        imgui.PushStyleVarFloat(imgui.StyleVar.ChildBorderSize, 0)
+        imgui.PushStyleVarFloat(imgui.StyleVar.ScrollbarSize, 12 * scale)
+        imgui.PushStyleVarVec2(imgui.StyleVar.WindowPadding, imgui.ImVec2(22 * scale, 18 * scale))
+        imgui.PushStyleVarVec2(imgui.StyleVar.ItemSpacing, imgui.ImVec2(10 * scale, 6 * scale))
+        imgui.PushStyleVarVec2(imgui.StyleVar.FramePadding, imgui.ImVec2(10 * scale, 7 * scale))
+        if bodyFont then imgui.PushFont(bodyFont) end
+        local shown = imgui.Begin("SFA / Records##checklogs", nil, windowFlags)
+        if shown then
+            local pos = imgui.GetWindowPos()
+            imgui.GetWindowDrawList():AddLine(imgui.ImVec2(pos.x + 18 * scale, pos.y + 1),
+                imgui.ImVec2(pos.x + width - 18 * scale, pos.y + 1), packed.accent, 2 * scale)
+            local header = imgui.GetCursorPos()
+            local headerWrap = width - 240 * scale
+            text(report.kind == "rank" and u8("SFA / Кадровая история") or u8("SFA / Реестр наказаний"), colors.accent, false, headerWrap)
+            text(report.nickname, nil, true, headerWrap)
+            local nextY = imgui.GetCursorPosY()
+            imgui.SetCursorPos(imgui.ImVec2(width - 152 * scale, header.y))
+            if imgui.Button(u8("Закрыть"), imgui.ImVec2(130 * scale, 36 * scale)) then view.close() end
+            imgui.SetCursorPos(imgui.ImVec2(width - 214 * scale, header.y + 44 * scale))
+            if imgui.Checkbox(u8("Тёмная тема"), darkTheme) then
+                mainIni.interface.dark_theme = darkTheme[0]
+                local ok, saved = pcall(inicfg.save, mainIni, INI_NAME)
+                if not ok or not saved then reportError("Сохранение темы", ok and "Не удалось записать INI" or saved) end
+            end
+            imgui.SetCursorPos(imgui.ImVec2(header.x, math.max(nextY, imgui.GetCursorPosY())))
+            gap(2)
+            local available = imgui.GetContentRegionAvail().x
+            if report.kind == "rank" then
+                local rank = report.rank or (report.state == "loading" and u8("Загружается...") or u8("Нет данных"))
+                text(u8("Ранг: ") .. rank .. (report.nextPromotion and u8("   /   Повышение: ") .. report.nextPromotion or ""))
+                local value, color = checkValue(report.checks.warnings, "warnings")
+                text(u8("Выговоры: ") .. value, color)
+                if report.checks.contract.state ~= "not_applicable" then
+                    value, color = checkValue(report.checks.contract, "contract")
+                    text(u8("Контракт / кафедра: ") .. value, color)
+                end
+            end
+            gap(3)
+            if #report.records > 0 then
+                imgui.SetNextItemWidth(math.max(120, available - 200 * scale))
+                imgui.InputTextWithHint("##search" .. view.searchRevision, u8("Поиск по записям..."), search, ffi.sizeof(search))
+                view.searchActive = view.visible and imgui.IsItemActive()
+                rebuildFilter(report)
+                imgui.SameLine()
+                if imgui.Button(u8("Сбросить"), imgui.ImVec2(0, 0)) then
+                    view.searchRevision = view.searchRevision + 1
+                    imgui.StrCopy(search, "")
+                    view.searchActive = false
+                    rebuildFilter(report)
+                end
+                text(string.format(u8("Записи: %d / %d   ·   Сначала новые"), #view.filtered, #report.records), colors.muted)
+            end
+            local childShown = imgui.BeginChild("##feed", imgui.ImVec2(0, 0), false)
+            if childShown then
+                if view.resetScroll then imgui.SetScrollY(0); view.resetScroll = false end
+                if #report.records > 0 then
+                    local recordWidth = math.max(160, imgui.GetContentRegionAvail().x - 4)
+                    for _, index in ipairs(view.filtered) do drawRecord(report.records[index], index, recordWidth) end
+                    if #view.filtered == 0 then text(u8("По этому запросу ничего не найдено."), colors.muted) end
+                else
+                    gap(20)
+                    text(report.state == "error" and u8("Не удалось загрузить данные")
+                        or report.state == "empty" and u8("Записей не найдено") or u8("Загружаем данные..."),
+                        report.state == "error" and colors.red or colors.accent, true)
+                    gap(8)
+                    text(report.message or u8("Результат появится здесь автоматически."), colors.muted)
+                end
+            end
+            imgui.EndChild()
+        end
+        imgui.End()
+        if bodyFont then imgui.PopFont() end
+        imgui.PopStyleVar(9)
+        imgui.PopStyleColor(#theme)
+    end
+
+    imgui.OnInitialize(function()
+        local io = imgui.GetIO()
+        -- Не уменьшаем шрифты на 800x600. Размеры целые, растрируются сразу в нужном масштабе.
+        local screenWidth = select(1, getScreenResolution())
+        scale = screenWidth >= 2400 and 1.4 or screenWidth >= 1800 and 1.15 or 1
+        io.ConfigFlags = bit.bor(io.ConfigFlags, imgui.ConfigFlags.NoMouseCursorChange)
+        io.MouseDrawCursor = false -- Курсором управляет MoonLoader, не Win32-бэкенд ImGui.
+        local ok, err = pcall(function()
+            local fontsPath = getFolderPath(0x14)
+            local path = fontsPath .. "\\arial.ttf"
+            local boldPath = fontsPath .. "\\arialbd.ttf"
+            if not doesFileExist(path) then path = fontsPath .. "\\trebucbd.ttf" end
+            if not doesFileExist(boldPath) then boldPath = path end
+            local ranges = io.Fonts:GetGlyphRangesCyrillic()
+            local config = imgui.ImFontConfig()
+            config.OversampleH, config.OversampleV, config.PixelSnapH = 2, 1, true
+            bodyFont = io.Fonts:AddFontFromFileTTF(path, math.floor(18 * scale), config, ranges)
+            recordFont = io.Fonts:AddFontFromFileTTF(boldPath, math.floor(21 * scale), config, ranges)
+            headingFont = io.Fonts:AddFontFromFileTTF(boldPath, math.floor(28 * scale), config, ranges)
+        end)
+        if not ok then print("[checklogs] ImGui font: " .. tostring(err)) end
+    end)
+    local function canShow()
+        return view.visible and not view.focusLost and not isPauseMenuActive() and not sampIsChatInputActive() and not sampIsDialogActive()
+    end
+
+    local function resetInput()
+        view.searchActive = false
+        view.searchRevision = (view.searchRevision or 0) + 1
+        local renderer = imgui.GetRenderer()
+        if not renderer then return end
+        renderer:SwitchContext()
+        local io = imgui.GetIO()
+        ffi.fill(io.KeysDown, ffi.sizeof(io.KeysDown), 0)
+        ffi.fill(io.MouseDown, ffi.sizeof(io.MouseDown), 0)
+        ffi.fill(io.NavInputs, ffi.sizeof(io.NavInputs), 0)
+        for i = 0, 511 do io.KeysDownDuration[i], io.KeysDownDurationPrev[i] = -1, -1 end
+        io.KeyCtrl, io.KeyShift, io.KeyAlt, io.KeySuper = false, false, false, false
+        io.MouseWheel, io.MouseWheelH = 0, 0
+        io:ClearInputCharacters()
+        imgui.SetWindowFocusStr(nil)
+    end
+    view.close = function()
+        view.visible = false
+        resetInput()
+    end
+
+    -- У mimgui 1.6.2 WM_KEYUP обрабатывается только при active=true.
+    -- После скрытия KEYUP терялся, а Enter/Escape оставались зажатыми в IO.
+    -- Здесь один маршрут сообщений: штатный декодер символов, свои границы захвата.
+    imgui.DisableInput = true
+    local heldKeys = {}
+    addEventHandler("onWindowMessage", function(message, key, lparam)
+        if message == 0x0008 or message == 0x001C and key == 0 then -- Потеря фокуса/активности.
+            heldKeys = {}
+            view.focusLost = true
+            resetInput()
+            return
+        elseif message == 0x0007 or message == 0x001C and key ~= 0 then
+            view.focusLost = false
+            return
+        end
+        local down = message == 0x0100 or message == 0x0104
+        local up = message == 0x0101 or message == 0x0105
+        local character = message == 0x0102 or message == 0x0103 or message == 0x0106
+            or message == 0x0107 or message == 0x0109
+        local mouse = message == 0x0020 or message >= 0x0200 and message <= 0x020E
+        if not down and not up and not character and not mouse then return end
+        local showing = canShow()
+        local held = heldKeys[key]
+        if down and (held == "control" or showing and (key == 27 or key == 13)) then
+            if held ~= "pass" then heldKeys[key] = "control" end
+            if not held and (key == 27 or not view.searchActive) then view.close() end
+            consumeWindowMessage(true, true)
+            return
+        elseif (up or character) and held == "control" then
+            if up then heldKeys[key] = nil end
+            consumeWindowMessage(true, true)
+            return
+        end
+
+        local renderer = imgui.GetRenderer()
+        local capture = showing and view.searchActive
+        if renderer then
+            renderer:SwitchContext()
+            local io = imgui.GetIO()
+            if showing and not mouse then capture = capture or io.WantTextInput or io.WantCaptureKeyboard end
+            -- Отпускание доставляется даже закрытому окну; повторный ввод туда не идёт.
+            if showing or up then renderer:WindowMessage(message, key, lparam or 0) end
+            if showing and mouse and io.WantCaptureMouse then consumeWindowMessage(true, true) end
+        end
+        if down then
+            if not held then heldKeys[key] = capture and "capture" or "pass" end
+            if capture or held == "capture" then
+                consumeWindowMessage(true, true)
+            end
+        elseif up then
+            heldKeys[key] = nil
+            if held == "capture" then consumeWindowMessage(true, true) end
+        elseif character and (capture or held == "capture") then
+            consumeWindowMessage(true, true)
+        end
+    end)
+
+    view.subscription = imgui.OnFrame(function()
+        local showing = canShow()
+        if view.wasShown and not showing then resetInput() end
+        view.wasShown = showing
+        return showing
+    end, drawReport)
+    view.subscription.LockPlayer = true
+    view.open = function(report)
+        resetInput()
+        view.report, view.visible, view.center = report, true, true
+        view.filtered, view.filterRecords, view.filterQuery = {}, nil, nil
+        view.copied, view.copiedUntil, view.resetScroll = nil, nil, true
+        imgui.StrCopy(search, "")
+    end
+    view.initialized = true
+end
+
+local function newOutput(kind, nickname, mode, count)
+    local output = {
+        kind = kind, nickname = u8(nickname), mode = mode, count = count, state = "loading", records = {},
+        checks = {warnings = {state = "waiting"}, contract = {state = "waiting"}},
+    }
+    if mode == 1 then
+        local ok, err = pcall(initializeRegistryView)
+        if ok then
+            registryView.open(output)
+        else
+            output.mode = 2
+            chat("[checklogs] ImGui недоступен, результат будет выведен в чат.")
+            print("[checklogs] ImGui: " .. tostring(err))
+        end
+    end
+    if output.mode == 2 then
+        if registryView.close then registryView.close() end
+        chat("Загрузка данных...")
+    end
+    return output
+end
+
+local function failOutput(output, context, err)
+    output.state, output.message = "error", u8(context .. ": " .. tostring(err))
+    output.checks.warnings.state, output.checks.contract.state = "unavailable", "unavailable"
+    reportError(context, err)
+end
+
+local function emptyOutput(output, message)
+    local plainMessage = message:gsub("{[%x]+}", "")
+    output.state, output.message = "empty", u8(plainMessage)
+    output.checks.warnings.state, output.checks.contract.state = "unavailable", "unavailable"
+    if output.mode == 2 then chat(message) end
+end
+
+local function outputMode(arg)
+    if not arg or arg == "1" then return 1 end
+    if arg == "2" then return 2 end
+    chat("Режим вывода: 1 — ImGui, 2 — чат!")
+end
+
+-- Снимаем один слой JS-экранирования, не повреждая обратные слеши внутри JSON.
+local function decodeGoogleEscapes(text)
+    local parts, position = {}, 1
+    local escapes = {b = "\b", f = "\f", n = "\n", r = "\r", t = "\t", ['"'] = '"', ["'"] = "'", ["\\"] = "\\", ["/"] = "/"}
+    while position <= #text do
+        local start = text:find("\\", position, true)
+        if not start then
+            parts[#parts + 1] = text:sub(position)
+            break
+        end
+        parts[#parts + 1] = text:sub(position, start - 1)
+        local char = text:sub(start + 1, start + 1)
+        local hex = text:sub(start + 2, start + 3)
+        if char == "x" and hex:match("^%x%x$") then
+            parts[#parts + 1] = string.char(tonumber(hex, 16))
+            position = start + 4
+        elseif char == "u" and text:sub(start + 2, start + 5):match("^%x%x%x%x$") then
+            local finish = start + 5
+            if text:sub(start + 6, start + 7) == "\\u" then finish = start + 11 end
+            local ok, value = pcall(json.decode, '"' .. text:sub(start, finish) .. '"')
+            parts[#parts + 1] = ok and value or text:sub(start, finish)
+            position = finish + 1
+        elseif escapes[char] then
+            parts[#parts + 1] = escapes[char]
+            position = start + 2
+        else
+            parts[#parts + 1] = "\\"
+            position = start + 1
+        end
+    end
+    return table.concat(parts)
+end
+
+local function extractUserHtml(text)
+    for _ = 1, 3 do
+        local start = text:match('userHtml"?%s*:%s*"()')
+        if start then
+            local finish = start
+            while finish <= #text do
+                local char = text:sub(finish, finish)
+                if char == "\\" then
+                    finish = finish + 2
+                elseif char == '"' then
+                    local ok, value = pcall(json.decode, text:sub(start - 1, finish))
+                    if ok and type(value) == "string" then return value end
+                    break
+                else
+                    finish = finish + 1
+                end
+            end
+        end
+        -- Сначала только hex: в JSON-описании \" может быть записано как \\\x22.
+        -- Одновременное снятие слешей разрушило бы вложенное JSON-экранирование.
+        local decoded = text:gsub("\\x(%x%x)", function(hex)
+            return string.char(tonumber(hex, 16))
+        end)
+        if decoded == text then decoded = decodeGoogleEscapes(text) end
+        if decoded == text then break end
+        text = decoded
+    end
+    return nil, "В ответе Google отсутствует корректный userHtml"
+end
+
+local function extractPunishmentHtml(text)
+    -- HtmlService передаёт JSON-конфигурацию внутри JS-строки goog.script.init.
+    -- Сначала снимаем JS-экранирование, затем декодируем JSON всей конфигурации.
+    -- Поиск userHtml до этого оставляет лишний слой слешей в тегах и данных.
+    local start = text:match('goog%.script%.init%s*%(%s*"()')
+    if not start then return extractUserHtml(text) end
+    local finish = start
+    while finish <= #text do
+        local char = text:sub(finish, finish)
+        if char == "\\" then
+            finish = finish + 2
+        elseif char == '"' then
+            local configJson = decodeGoogleEscapes(text:sub(start, finish - 1))
+            local ok, config = pcall(json.decode, configJson)
+            if not ok then
+                return nil, "Ошибка JSON-конфигурации Google: " .. tostring(config)
+            end
+            if type(config) ~= "table" or type(config.userHtml) ~= "string" then
+                return nil, "В конфигурации Google отсутствует userHtml"
+            end
+            return config.userHtml
+        else
+            finish = finish + 1
+        end
+    end
+    return nil, "Незавершённая JS-строка конфигурации Google"
+end
+
+-- Один опрос всех effil-потоков вместо отдельной корутины на каждый запрос.
+-- Из потока возвращаем только нужные поля, без функций response.json/response.xml.
+local httpWorker
+local function httpWorkerBody(method, url, args)
+    local ok, status, text = pcall(function()
+        local requests = require "requests_script"
+        -- ContentService возвращает 302. В приложенной requests_script GET имеет
+        -- source даже без тела, поэтому LuaSocket не следует редиректу сам.
+        -- LuaSec 0.6 также не поддерживает allow_redirects=true.
+        args.allow_redirects = false
+        for redirect = 0, 5 do
+            local response = requests.request(method, url, args)
+            local code = response.status_code
+            if method ~= "GET" or (code ~= 301 and code ~= 302 and code ~= 303 and code ~= 307 and code ~= 308) then
+                return code, response.text
+            end
+            local location = response.headers and response.headers.location
+            assert(location and redirect < 5, "Некорректный редирект или превышен лимит редиректов")
+            url = require("socket.url").absolute(url, location)
+        end
+    end)
+    if ok then return true, status, text end
+    return false, tostring(status)
+end
+local pendingRequests = {}
+local pendingCallbacks = {}
+
+local function queueCallback(callback, value)
+    pendingCallbacks[#pendingCallbacks + 1] = function() callback(value) end
+end
+
+local function asyncHttpRequest(method, url, args, resolve, reject)
+    args = args or {}
+    args.timeout = args.timeout or HTTP_TIMEOUT
+    reject = reject or function(err) reportError("HTTP-запрос", err) end
+    local ok, runner = pcall(httpWorker, method, url, args)
+    if not ok then
+        queueCallback(reject, runner)
+        return
+    end
+    pendingRequests[#pendingRequests + 1] = {
+        runner = runner,
+        resolve = resolve,
+        reject = reject,
+        deadline = os.time() + HTTP_DEADLINE,
+    }
+end
+
+local function pollHttpRequests()
+    for i = #pendingRequests, 1, -1 do
+        local request = pendingRequests[i]
+        local status, err = request.runner:status()
+        local finished = true
+        if status == "completed" then
+            local ok, code, text = request.runner:get()
+            if ok then
+                queueCallback(request.resolve, {status_code = code, text = text})
+            else
+                queueCallback(request.reject, code)
+            end
+        elseif err or status == "failed" or status == "canceled" then
+            queueCallback(request.reject, err or status)
+        elseif os.time() >= request.deadline then
+            request.runner:cancel()
+            queueCallback(request.reject, "Превышено время ожидания HTTP-запроса")
+        else
+            finished = false
+        end
+        if finished then table.remove(pendingRequests, i) end
+    end
+    local callbacks = pendingCallbacks
+    pendingCallbacks = {}
+    for _, callback in ipairs(callbacks) do
+        local ok, err = pcall(callback)
+        if not ok then reportError("Обработка ответа", err) end
+    end
+end
+
+local function requestGas(url, resolve, reject)
+    asyncHttpRequest("GET", url, nil, function(response)
+        if response.status_code ~= 200 then
+            reject("HTTP " .. tostring(response.status_code))
+            return
+        end
+        if type(response.text) ~= "string" then
+            reject("Пустой или некорректный ответ Google")
+            return
+        end
+        resolve(response.text)
+    end, reject)
+end
+
+local function requestGasHtml(url, resolve, reject)
+    requestGas(url, function(text)
+        local html, err = extractUserHtml(text)
+        if not html then
+            reject(err)
+            return
+        end
+        resolve(html)
+    end, reject)
+end
+
+local function requestBlacklist(nickname, resolve, reject)
+    requestGas(BLACKLIST_URL .. "?nickname=" .. urlEncode(u8(nickname)), function(text)
+        if trim(text) == "NOT_FOUND" then
+            resolve(nil)
+            return
+        end
+        local html, err = extractUserHtml(text)
+        if not html then
+            reject(err)
+            return
+        end
+        local author, nick, reason, date, degree = fromUtf8(html):match("^([^,]*),([^,]*),(.*),([^,]*),([^,]*)$")
+        if not author or nick == "" or degree == "" then
+            reject("Неполная запись ЧС")
+            return
+        end
+        resolve({author = author, nickname = nick, reason = reason, date = date, degree = trim(degree)})
+    end, reject)
+end
+
+local function printBlacklist(info)
+    chat(SEPARATOR)
+    chat(string.format("{00FA9A}Ник:{ffffff} %s | {00FA9A}Внёс:{ffffff} %s | {00FA9A}Дата: {ffffff}%s",
+        info.nickname, info.author, info.date))
+    chat(string.format("{00FA9A}Степень: {ffffff}%s | {00FA9A}Причина:{ffffff} %s",
+        info.degree == "6" and "Вынесен" or info.degree, info.reason))
+    chat(SEPARATOR)
+end
+
+local function hexToBytes(hex)
+    local bytes = {}
+    for i = 1, #hex, 2 do bytes[#bytes + 1] = tonumber(hex:sub(i, i + 1), 16) end
     return bytes
 end
 
-local function bytes2hex(bytes)
-    local t = {}
-    for i = 1, #bytes do t[i] = string.format("%02x", bytes[i]) end
-    return table.concat(t)
-end
-
--- Единственная кука которую проверяет сервер — R3ACTLB.
--- Получается автоматически решением AES-челленджа.
-local currentR3ACTLB = nil
-
-local function buildCookieHeader()
-    if currentR3ACTLB then
-        return "R3ACTLB=" .. currentR3ACTLB
-    end
-    return ""
-end
-
 local function solveChallenge(html)
-    local a, b, c = html:match('"([a-f0-9]+)","([a-f0-9]+)","([a-f0-9]+)"')
-    if not a or #a ~= 32 or #b ~= 32 or #c ~= 32 then return nil end
-    local pt = slowAES:decrypt(hex2bytes(c), 2, hex2bytes(a), hex2bytes(b))
-    return bytes2hex(pt)
+    local key, iv, ciphertext = html:match('"(%x+)"%s*,%s*"(%x+)"%s*,%s*"(%x+)"')
+    if not key or #key ~= 32 or #iv ~= 32 or #ciphertext ~= 32 then return nil end
+    local ok, bytes = pcall(slowAES.decrypt, slowAES,
+        hexToBytes(ciphertext), slowAES.modeOfOperation.CBC, hexToBytes(key), hexToBytes(iv))
+    if not ok or type(bytes) ~= "table" or #bytes ~= 16 then return nil end
+    local hex = {}
+    for i = 1, #bytes do hex[i] = string.format("%02x", bytes[i]) end
+    return table.concat(hex)
 end
 
--- ============================================================
--- POST-запрос с авто-решением челленджа
--- ============================================================
+-- Не меняем параметры DataTables: восемь столбцов, последние 25 записей, fraction=3.
+local function buildLogBodyPrefix()
+    local fields = {"draw=9"}
+    for column = 0, 7 do
+        local prefix = "columns%5B" .. column .. "%5D"
+        fields[#fields + 1] = prefix .. "%5Bdata%5D=" .. column
+        fields[#fields + 1] = prefix .. "%5Bname%5D="
+        if column == 2 then fields[#fields + 1] = prefix .. "%5Bsearchable%5D=true" else fields[#fields + 1] = prefix .. "%5Bsearchable%5D=false" end
+        fields[#fields + 1] = prefix .. "%5Borderable%5D=true"
+        fields[#fields + 1] = prefix .. "%5Bsearch%5D%5Bvalue%5D="
+        fields[#fields + 1] = prefix .. "%5Bsearch%5D%5Bregex%5D=false"
+    end
+    fields[#fields + 1] = "order%5B0%5D%5Bcolumn%5D=7&order%5B0%5D%5Bdir%5D=desc&start=0&length=25&search%5Bvalue%5D="
+    return table.concat(fields, "&")
+end
+local LOG_BODY_PREFIX = buildLogBodyPrefix()
+local currentR3ACTLB
 
-local function doPostRequest(params, headers, retry)
+local function printLogLines(rows, count)
+    for i = math.min(count, #rows), 1, -1 do
+        local row = rows[i]
+        local rank = displayText(row[6])
+        chat(SEPARATOR)
+        chat(string.format("{00FA9A}Инициатор:{ffffff} %s | {00FA9A}Объект:{ffffff} %s | {00FA9A}Действие: {ffffff}%s",
+            displayText(row[2]), displayText(row[3]), displayText(row[4])))
+        chat(string.format("{00FA9A}Старый ранг:{ffffff} %s | {00FA9A}Новый ранг:{ffffff} %s | {00FA9A}Причина: {ffffff}%s",
+            displayText(row[5]), rank, displayText(row[7])))
+        chat(string.format("{00FA9A}Дата: {ffffff}%s | {00FA9A}Следующее повышение:{ffffff} %s",
+            displayText(row[8]), addDaysToDateString(row[8], getSrok(rank))))
+        chat(SEPARATOR)
+    end
+end
+
+local function prepareRankOutput(output, rows)
+    local records = {}
+    for i = 1, math.min(output.count, #rows) do
+        local row = rows[i]
+        local rank = displayText(row[6])
+        records[#records + 1] = prepareRecord({
+            title = uiValue(row[4]), date = uiValue(row[8]),
+            fields = {
+                {u8("Инициатор"), uiValue(row[2])}, {u8("Объект"), uiValue(row[3])},
+                {u8("Старый ранг"), uiValue(row[5])}, {u8("Новый ранг"), uiValue(row[6])},
+                {u8("Причина"), uiValue(row[7])},
+                {u8("Следующее повышение"), u8(addDaysToDateString(row[8], getSrok(rank)))},
+            },
+        })
+    end
+    output.records, output.rank = records, uiValue(rows[1][6])
+    output.nextPromotion = u8(addDaysToDateString(rows[1][8], getSrok(displayText(rows[1][6]))))
+    output.state = "checking"
+end
+
+local function loadLogDetails(nickname, count, rows, output)
+    local needsContract = sergeantRanks[displayText(rows[1][6])]
+    local remaining = needsContract and 2 or 1
+    local warnings, contract
+    if output.mode == 1 then prepareRankOutput(output, rows) end
+    output.checks.warnings.state = "loading"
+    output.checks.contract.state = needsContract and "loading" or "not_applicable"
+    local function finish()
+        remaining = remaining - 1
+        if remaining > 0 then return end
+        output.state = "ready"
+        if output.mode == 2 then
+            printLogLines(rows, count)
+            if warnings and warnings ~= "-1" then
+                chat(string.format("{FF0000}Есть выговоры до %s", warnings))
+            end
+            if contract and contract ~= "Нет контракта" then
+                chat(string.format("{00FA9A}На военной кафедре/контракте до:{ffffff} %s", contract))
+            end
+        end
+    end
+    local function checkFailed(kind, context, err)
+        output.checks[kind] = {state = "error", message = u8(context .. ": " .. tostring(err))}
+        reportError(context, err) -- Дополнительные проверки всегда сообщают ошибки и в SA-MP чат.
+    end
+    local encodedNick = urlEncode(u8(nickname))
+    requestGasHtml(PUNISHMENTS_URL .. "?nickname=" .. encodedNick, function(html)
+        if html == "-1" or html:match("^%d%d%.%d%d%.%d%d%d%d$") then
+            warnings = html
+            output.checks.warnings = {state = html == "-1" and "none" or "found", value = html}
+        else
+            checkFailed("warnings", "Проверка выговоров для " .. nickname, "Некорректный ответ: " .. html)
+        end
+        finish()
+    end, function(err)
+        checkFailed("warnings", "Проверка выговоров для " .. nickname, err)
+        finish()
+    end)
+    if needsContract then
+        requestGasHtml(CONTRACTS_URL .. "?contract=" .. encodedNick, function(html)
+            local text = fromUtf8(html)
+            if text == "Нет контракта" or text:match("^%d%d%.%d%d%.%d%d%d%d$") then
+                contract = text
+                output.checks.contract = {state = text == "Нет контракта" and "none" or "found", value = html}
+            else
+                checkFailed("contract", "Проверка контракта для " .. nickname, "Некорректный ответ: " .. html)
+            end
+            finish()
+        end, function(err)
+            checkFailed("contract", "Проверка контракта для " .. nickname, err)
+            finish()
+        end)
+    end
+end
+
+local function requestLogs(nickname, count, output, retry)
     retry = retry or 0
     if retry > 2 then
-        sampAddChatMessage("Не удалось выполнить запрос после нескольких попыток", -1)
+        failOutput(output, "Загрузка логов", "Не удалось решить челлендж за три попытки")
         return
     end
-
-    headers["Cookie"]         = buildCookieHeader()
-    headers["Content-Length"] = tostring(#headers.data)
-
-    asyncHttpRequest("POST", "https://logs.evolve-rp.ru/saint-louis/journal",
-        { headers = headers, data = headers.data },
-        function(response)
-            if response.status_code ~= 200 then
-                sampAddChatMessage("Ошибка загрузки логов! Код: " .. response.status_code, -1)
+    local headers = {
+        ["X-KL-Ajax-Request"] = "Ajax_Request",
+        ["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+        ["Content-Type"] = "application/x-www-form-urlencoded; charset=UTF-8",
+        ["Accept"] = "application/json, text/javascript, */*; q=0.01",
+        ["Referer"] = LOGS_ORIGIN .. "/saint-louis",
+        ["Origin"] = LOGS_ORIGIN,
+        ["X-Requested-With"] = "XMLHttpRequest",
+        ["Cookie"] = currentR3ACTLB and "R3ACTLB=" .. currentR3ACTLB or "",
+    }
+    local body = LOG_BODY_PREFIX .. urlEncode(u8(nickname)) .. "&search%5Bregex%5D=false&fraction=3"
+    asyncHttpRequest("POST", LOGS_URL, {headers = headers, data = body}, function(response)
+        if response.status_code ~= 200 or type(response.text) ~= "string" then
+            failOutput(output, "Загрузка логов", "HTTP " .. tostring(response.status_code))
+            return
+        end
+        local text = response.text
+        if text:lower():match("<html") or text:lower():match("<!doctype") then
+            local token = solveChallenge(text)
+            if not token then
+                failOutput(output, "Загрузка логов", "Не удалось разобрать AES-челлендж")
                 return
             end
-
-            local text = response.text
-
-            -- Антибот-челлендж: сервер вернул HTML вместо JSON
-            if text:match("^<!DOCTYPE html>") or text:match("<html") then
-                local token = solveChallenge(text)
-                if token then
-                    currentR3ACTLB = token
-                    doPostRequest(params, headers, retry + 1)
-                else
-                    sampAddChatMessage("Не удалось решить челлендж, попробуйте позже", -1)
-                end
-                return
-            end
-
-            -- Обычный JSON-ответ
-            local ok, jsonData = pcall(json.decode, text)
-            if not ok then
-                sampAddChatMessage("Ошибка разбора JSON", -1)
-                return
-            end
-            if #jsonData.data == 0 then
-                sampAddChatMessage(string.format("{ffffff}%s {00FA9A}в логах не обнаружен!", params[1]), 0x00FA9A)
-                return
-            end
-
-            -- Получаем данные о выговорах параллельно с выводом
-            asyncHttpRequest("GET",
-                "https://script.google.com/macros/s/AKfycbyNToZlIqnWl7mqaW4FjjHIjzMAJVPQ0OKBHWvdtTok9xOV6pt3rHzb0HsDrTKbkbHj/exec?nickname=" .. params[1],
-                nil,
-                function(response)
-                    local html      = u8:decode(response.text)
-                    local warnings  = html:gmatch('userHtml\\x22:\\x22(.-)\\x22')()
-                    local count     = math.min(params[2], #jsonData.data)
-                    local rank      = u8:decode(jsonData.data[1][6])
-
-                    local function printLines()
-                        for i = count, 1, -1 do
-                            local line = jsonData.data[i]
-                            sampAddChatMessage("--------------------------------------------------------------------------------------------", 0x00FA9A)
-                            sampAddChatMessage(string.format("{00FA9A}Инициатор:{ffffff} %s | {00FA9A}Объект:{ffffff} %s | {00FA9A}Действие: {ffffff}%s",
-                                line[2], line[3], u8:decode(line[4])), 0x00FA9A)
-                            sampAddChatMessage(string.format("{00FA9A}Старый ранг:{ffffff} %s | {00FA9A}Новый ранг:{ffffff} %s | {00FA9A}Причина: {ffffff}%s",
-                                u8:decode(line[5]), u8:decode(line[6]), u8:decode(line[7])), 0x00FA9A)
-                            sampAddChatMessage(string.format("{00FA9A}Дата: {ffffff}%s | {00FA9A}Следующее повышение:{ffffff} %s",
-                                line[8], addDaysToDateString(line[8], getSrok(u8:decode(line[6])))), 0x00FA9A)
-                            sampAddChatMessage("--------------------------------------------------------------------------------------------", 0x00FA9A)
-                        end
-                        if warnings and warnings ~= "-1" then
-                            sampAddChatMessage(string.format("{FF0000}Есть выговоры до %s", warnings), 0x00FA9A)
-                        end
-                    end
-
-                    -- Для сержантского состава дополнительно проверяем контракт
-                    local sergeantRanks = {
-                        ["Младший сержант [3]"] = true,
-                        ["Сержант [4]"]         = true,
-                        ["Старший сержант [5]"] = true,
-                    }
-                    if sergeantRanks[rank] then
-                        asyncHttpRequest("GET",
-                            "https://script.google.com/macros/s/AKfycbxB7WwPsPpYHO5aPRdbrsrNuX2pZtS1s4GX8raft68PAX7BcKDee1GqVxUYCH2FrgiQ/exec?contract=" .. params[1],
-                            nil,
-                            function(response)
-                                local h = u8:decode(response.text)
-                                local contract = u8:decode(h:gmatch('userHtml\\x22:\\x22(.-)\\x22')())
-                                printLines()
-                                if contract ~= "Нет контракта" then
-                                    sampAddChatMessage(string.format("{00FA9A}На военной кафедре/контракте до:{ffffff} %s", contract), 0x00FA9A)
-                                end
-                            end,
-                            function(err) print(err) end
-                        )
-                    else
-                        printLines()
-                    end
-                end,
-                function(err) print(err) end
-            )
-        end,
-        function(err) print(err) end
-    )
+            currentR3ACTLB = token
+            requestLogs(nickname, count, output, retry + 1)
+            return
+        end
+        local ok, data = pcall(json.decode, text)
+        if not ok or type(data) ~= "table" or type(data.data) ~= "table" then
+            failOutput(output, "Загрузка логов", "Некорректный JSON или отсутствует массив data")
+            return
+        end
+        local rows = data.data
+        if not validRecords(rows, {2, 3, 4, 5, 6, 7, 8}) then
+            failOutput(output, "Загрузка логов", "Некорректная запись в data")
+            return
+        end
+        if #rows == 0 then
+            emptyOutput(output, string.format("{ffffff}%s {00FA9A}в логах не обнаружен!", nickname))
+            return
+        end
+        loadLogDetails(nickname, count, rows, output)
+    end, function(err) failOutput(output, "Загрузка логов", err) end)
 end
 
-local function register_checklogs_commands(unregister_first)
-    local cmds = {
-        {"getbl",         cmd_getbl},
-        {"getpun",        cmd_getpun},
-        {"getrank",       cmd_getrank},
-        {"invite",        cmd_invite},
-        {"checkcontract", cmd_checkcontract},
-        {"contracts",     cmd_contracts},
-        {"acccontract",   cmd_acccontract},
-        {"logshelp",      cmd_logshelp},
-    }
-
-    for _, data in ipairs(cmds) do
-        if unregister_first then
-            pcall(sampUnregisterChatCommand, data[1])
+local function cmdGetBl(text)
+    local nickname = commandNickname(text, "getbl")
+    if not nickname then return end
+    chat("Загрузка данных...")
+    requestBlacklist(nickname, function(info)
+        if info then
+            printBlacklist(info)
+        else
+            chat(string.format("{ffffff}%s {00FA9A}в чёрном списке не обнаружен!", nickname))
         end
-        sampRegisterChatCommand(data[1], data[2])
+    end, function(err) reportError("Проверка ЧС для " .. nickname, err) end)
+end
+
+local function printPunishmentHistory(history)
+    for _, item in ipairs(history) do
+        chat(SEPARATOR)
+        chat(string.format("{00FA9A}Ник:{ffffff} %s | {00FA9A}Выдал:{ffffff} %s | {00FA9A}Дата: {ffffff}%s",
+            displayText(item.violator), displayText(item.author), displayText(item.date)))
+        chat(string.format("{00FA9A}Санкция: {ffffff}%s | {00FA9A}Причина:{ffffff} %s | {00FA9A}Описание:{ffffff} %s",
+            displayText(item.sanction), displayText(item.reason), displayText(item.description)))
+        chat(SEPARATOR)
     end
 end
--- ============================================================
--- main
--- ============================================================
+
+local function cmdGetPun(text)
+    local args = splitArgs(text)
+    if #args < 1 or #args > 2 then
+        chat("Введите: /getpun [id / nick] [режим: 1 — ImGui, 2 — чат]")
+        return
+    end
+    local mode = outputMode(args[2])
+    if not mode then return end
+    local nickname = lookupNickname(args[1])
+    if not nickname then return end
+    local output = newOutput("pun", nickname, mode)
+    requestGas(PUNISHMENTS_URL .. "?getpun_nick=" .. urlEncode(u8(nickname)), function(text)
+        local html, err = extractPunishmentHtml(text)
+        if not html and text:find("<data>", 1, true) then html = text end
+        if not html then
+            failOutput(output, "Реестр наказаний для " .. nickname, err)
+            return
+        end
+        local rawJson = html:match("<data>(.*)</data>")
+        if not rawJson then
+            failOutput(output, "Реестр наказаний для " .. nickname, "В ответе отсутствует тег data")
+            return
+        end
+        local ok, history = pcall(json.decode, rawJson)
+        if not ok or type(history) ~= "table" then
+            local reason = ok and "Ожидался массив наказаний" or tostring(history)
+            failOutput(output, "Реестр наказаний для " .. nickname, "Некорректный JSON в теге data: " .. reason)
+            return
+        end
+        if not validRecords(history, {"violator", "author", "date", "sanction", "reason", "description"}, rawJson) then
+            failOutput(output, "Реестр наказаний для " .. nickname, "Ожидался массив записей с текстовыми полями")
+            return
+        end
+        if #history == 0 then
+            emptyOutput(output, string.format("{ffffff}%s {00FA9A}в реестре наказаний не обнаружен!", nickname))
+            return
+        end
+        output.state = "ready"
+        if output.mode == 2 then
+            printPunishmentHistory(history)
+        else
+            local records = {}
+            for _, item in ipairs(history) do
+                records[#records + 1] = prepareRecord({
+                    title = uiValue(item.sanction), date = uiValue(item.date),
+                    fields = {
+                        {u8("Ник"), uiValue(item.violator)}, {u8("Выдал"), uiValue(item.author)},
+                        {u8("Причина"), uiValue(item.reason)}, {u8("Описание"), uiValue(item.description)},
+                    },
+                })
+            end
+            newestFirst(records)
+            output.records = records
+        end
+    end, function(err) failOutput(output, "Реестр наказаний для " .. nickname, err) end)
+end
+
+local function cmdGetRank(text)
+    local args = splitArgs(text)
+    if #args < 1 or #args > 3 then
+        chat("Введите: /getrank [id / nick] [режим: 1 — ImGui, 2 — чат] [количество 1-25]")
+        return
+    end
+    local mode = outputMode(args[2])
+    if not mode then return end
+    local count = tonumber(args[3] or (mode == 1 and MAX_LOG_RECORDS or 5))
+    if not count or count % 1 ~= 0 or count < 1 or count > MAX_LOG_RECORDS then
+        chat("Количество записей должно быть целым числом от 1 до 25!")
+        return
+    end
+    local nickname = lookupNickname(args[1])
+    if not nickname then return end
+    requestLogs(nickname, count, newOutput("rank", nickname, mode, count))
+end
+
+local function cmdInvite(text)
+    local args = splitArgs(text)
+    local id = getPlayerId(args[1])
+    if not id or #args > 2 or (args[2] and args[2] ~= "1") then
+        chat("Введите: /invite [id] [1 - принять без проверки на ЧС]")
+        return
+    end
+    if args[2] == "1" then
+        sampSendChat("/invite " .. id)
+        return
+    end
+    if not sampIsPlayerConnected(id) then
+        chat("Игрок оффлайн!")
+        return
+    end
+    local nickname = sampGetPlayerNickname(id)
+    chat("Загрузка данных...")
+    requestBlacklist(nickname, function(info)
+        if not info or info.degree == "6" then
+            sampSendChat("/invite " .. id)
+        else
+            printBlacklist(info)
+        end
+    end, function(err) reportError("Приём отменён: ЧС для " .. nickname .. " не проверен", err) end)
+end
+
+local function cmdCheckContract(text)
+    local nickname = commandNickname(text, "checkcontract")
+    if not nickname then return end
+    chat("Загрузка данных...")
+    requestGasHtml(CONTRACTS_URL .. "?nickname=" .. urlEncode(u8(nickname)), function(html)
+        chat(fromUtf8(html))
+    end, function(err) reportError("Проверка заявки для " .. nickname, err) end)
+end
+
+local function cmdContracts()
+    chat("Загрузка данных...")
+    requestGasHtml(CONTRACTS_URL, function(html)
+        local nicknames, wanted = {}, {}
+        for nickname in fromUtf8(html):gmatch("[^,]+") do
+            nickname = trim(nickname)
+            nicknames[#nicknames + 1] = nickname
+            wanted[nickname] = true
+        end
+        -- Один проход по игрокам вместо полного перебора для каждого контрактника.
+        local online = {}
+        local ok, myId = sampGetPlayerIdByCharHandle(PLAYER_PED)
+        if ok then
+            local nickname = sampGetPlayerNickname(myId)
+            if wanted[nickname] then online[nickname] = myId end
+        end
+        if #nicknames > 0 then
+            for id = 0, MAX_PLAYER_ID do
+                if sampIsPlayerConnected(id) then
+                    local nickname = sampGetPlayerNickname(id)
+                    if wanted[nickname] then online[nickname] = id end
+                end
+            end
+        end
+        local found = false
+        for _, nickname in ipairs(nicknames) do
+            if online[nickname] then
+                chat(string.format("%s [%s]", nickname, online[nickname]))
+                found = true
+            end
+        end
+        if not found then chat("Список пуст") end
+    end, function(err) reportError("Список контрактников", err) end)
+end
+
+local function cmdAccContract(text)
+    local nickname = commandNickname(text, "acccontract")
+    if not nickname then return end
+    local ok, myId = sampGetPlayerIdByCharHandle(PLAYER_PED)
+    if not ok then
+        reportError("Принятие контракта", "Не удалось определить ваш ID")
+        return
+    end
+    local myNickname = sampGetPlayerNickname(myId)
+    chat("Загрузка данных...")
+    requestGasHtml(CONTRACTS_URL .. "?nickname=" .. urlEncode(u8(nickname)) .. "&staff=" .. urlEncode(u8(myNickname)), function(html)
+        chat(fromUtf8(html))
+    end, function(err) reportError("Принятие контракта для " .. nickname, err) end)
+end
+
+local HELP_TEXT =
+        "{00FA9A}/getbl [id/nick]{FFFFFF} - Проверить игрока в ЧС SFA\n" ..
+        "{00FA9A}/getpun [id/nick] [режим]{FFFFFF} - Реестр наказаний (1 — ImGui, 2 — чат)\n" ..
+        "{00FA9A}/getrank [id/nick] [режим] [кол-во]{FFFFFF} - Логи (1 — ImGui, 2 — чат; 1-25 записей, по умолчанию 25 / 5)\n" ..
+        "{00FA9A}/invite [id] [1]{FFFFFF} - Принять во фракцию с проверкой на ЧС; [1] - без проверки\n" ..
+        "{00FA9A}/checkcontract [id/nick]{FFFFFF} - Проверить наличие одобренного контракта\n" ..
+        "{00FA9A}/contracts{FFFFFF} - Список непринятых контрактников онлайн\n" ..
+        "{00FA9A}/acccontract [id/nick]{FFFFFF} - Проставить принятие контрактника в таблице\n" ..
+        "{00FA9A}/checklibs{FFFFFF} - Проверить SHA256 библиотек, скачать отсутствующие\n" ..
+        "{00FA9A}/updatelibs{FFFFFF} - Подготовить замену отличающихся библиотек после выхода из GTA"
+local helpPending = false
+local function helpInChat()
+    chat("[checklogs] Список команд:")
+    for line in HELP_TEXT:gmatch("[^\n]+") do
+        line = line:gsub("{%x%x%x%x%x%x}", "")
+        -- У SA-MP ограничена длина строки чата; не теряем хвост длинной справки.
+        while #line > 120 do
+            local split = line:sub(1, 120):match(".*()%s") or 120
+            chat(line:sub(1, split))
+            line = line:sub(split + 1)
+        end
+        chat(line)
+    end
+end
+local function cmdLogsHelp()
+    if helpPending then return end
+    helpPending = true
+    -- Не показываем диалог внутри обработчика отправки команды: SA-MP ещё
+    -- закрывает чат, а тот же Enter может сразу закрыть только что открытое окно.
+    local created, createError = pcall(lua_thread.create, function()
+        local ok, err = pcall(function()
+            wait(100)
+            local deadline = os.time() + 5
+            while sampIsChatInputActive() or isKeyDown(13) or isKeyDown(27) do
+                if os.time() >= deadline then helpInChat(); return end
+                wait(0)
+            end
+            if sampIsDialogActive() then
+                chat("[checklogs] Закройте текущий диалог и повторите /logshelp.")
+                return
+            end
+            local shown, showError = pcall(sampShowDialog, 1337, "{00FA9A}checklogs help", HELP_TEXT, "Закрыть", "", 0)
+            wait(0)
+            if not shown or not sampIsDialogActive() then
+                helpInChat()
+                if not shown then print("[checklogs] Help dialog: " .. tostring(showError)) end
+            end
+        end)
+        helpPending = false
+        if not ok then
+            helpInChat()
+            print("[checklogs] Help: " .. tostring(err))
+        end
+    end)
+    if not created then
+        helpPending = false
+        helpInChat()
+        print("[checklogs] Help thread: " .. tostring(createError))
+    end
+end
+
+-- Выполняется из main после готовности SA-MP; файл проверяется до require/замены.
+local function downloadLuaFile(url, path)
+    local finished, received = false, false
+    local ok, err = pcall(downloadUrlToFile, url, path, function(_, status)
+        if status == moonloader.download_status.STATUS_ENDDOWNLOADDATA then received = true end
+        if status == moonloader.download_status.STATUSEX_ENDDOWNLOAD then finished = true end
+    end)
+    if not ok then return false, err end
+    local deadline = os.time() + DOWNLOAD_DEADLINE
+    while not finished and os.time() < deadline do wait(100) end
+    if not finished or not received then return false, "Загрузка не завершена" end
+    local chunk, compileError = loadfile(path)
+    if not chunk then return false, compileError end
+    return true
+end
+
+local function ensureLibraries()
+    local ok, err = pcall(function()
+        moonloader = require "lib.moonloader"
+        encoding = require "encoding"
+        encoding.default, utf8 = "CP1251", encoding.UTF8
+        json = require "json"
+        effil = require "effil"
+        inicfg = require "inicfg"
+        slowAES = require "lib.slowAES_l51"
+        mainIni = inicfg.load(DEFAULT_INI, INI_NAME)
+        inicfg.save(mainIni, INI_NAME)
+        httpWorker = effil.thread(httpWorkerBody)
+    end)
+    if not ok then
+        reportError("Загрузка библиотек", err)
+        chat("[checklogs] Доступны /checklibs и /updatelibs; после исправления перезапустите скрипт/игру.")
+    end
+    return ok
+end
+
+local function checkForUpdates()
+    local manifestPath = os.tmpname()
+    local finished = false
+    downloadUrlToFile(UPDATE_ROOT .. "version.json?" .. os.time(), manifestPath, function(_, status)
+        if status == moonloader.download_status.STATUSEX_ENDDOWNLOAD then finished = true end
+    end)
+    local deadline = os.time() + DOWNLOAD_DEADLINE
+    while not finished and os.time() < deadline do wait(100) end
+    local file = finished and io.open(manifestPath, "rb")
+    if not file then reportError("Проверка обновлений", "Не удалось загрузить version.json"); return end
+    local text = file:read("*a")
+    file:close()
+    os.remove(manifestPath)
+    local ok, manifest = pcall(json.decode, text)
+    if not ok or type(manifest) ~= "table" or not manifest.latest or type(manifest.updateurl) ~= "string" then
+        reportError("Проверка обновлений", "Некорректный version.json")
+        return
+    end
+    if tostring(manifest.latest) == SCRIPT_VERSION then print("[checklogs] Обновление не требуется."); return end
+    chat("[checklogs] Обнаружено обновление: " .. tostring(manifest.latest))
+    local path = thisScript().path
+    local tempPath = path .. ".update-" .. os.time()
+    local backupPath = tempPath .. ".backup"
+    if doesFileExist(tempPath) or doesFileExist(backupPath) then
+        reportError("Обновление", "Временный файл уже существует")
+        return
+    end
+    ok, text = downloadLuaFile(manifest.updateurl, tempPath)
+    if not ok then reportError("Обновление", text); return end
+    ok, text = os.rename(path, backupPath)
+    if not ok then reportError("Обновление", text); return end
+    ok, text = os.rename(tempPath, path)
+    if not ok then
+        local restored, restoreError = os.rename(backupPath, path)
+        reportError("Обновление", text)
+        if not restored then reportError("Восстановление скрипта из " .. backupPath, restoreError) end
+        return
+    end
+    os.remove(backupPath)
+    chat("[checklogs] Обновление завершено!")
+    wait(500)
+    thisScript():reload()
+end
 
 function main()
     if not isSampLoaded() or not isSampfuncsLoaded() then return end
     while not isSampAvailable() do wait(100) end
-    if autoupdate_loaded and enable_autoupdate and Update then
-        pcall(Update.check, Update.json_url, Update.prefix, Update.url)
-    end
     wait(5000)
-    register_checklogs_commands(true)
-    sampAddChatMessage("checklogs by Leo_Markin v15.1 loaded. {FFFFFF}/logshelp{00FA9A} - список команд", 0x00FA9A)
-    print("checklogs by Leo_Markin v15.1 loaded.")
-
-    while true do
-        if #pendingHttpCallbacks > 0 then
-            local callbacks = pendingHttpCallbacks
-            pendingHttpCallbacks = {}
-            for _, fn in ipairs(callbacks) do
-                local ok, err = pcall(fn)
-                if not ok then print("[checklogs] callback error: " .. tostring(err)) end
-            end
-        end
-        wait(0)
+    -- Справке не нужны библиотеки; она доступна и во время проверки/восстановления.
+    pcall(sampUnregisterChatCommand, "logshelp")
+    local helpRegistered, registerResult = pcall(sampRegisterChatCommand, "logshelp", cmdLogsHelp)
+    if not helpRegistered or registerResult == false then
+        helpInChat()
+        chat("[checklogs] Не удалось зарегистрировать /logshelp. Проверьте moonloader.log.")
+        print("[checklogs] Help registration failed (command conflict/limit/API): " .. tostring(registerResult))
     end
-end
-
--- ============================================================
--- Команды
--- ============================================================
-
-function cmd_getbl(arg)
-    if #arg == 0 then
-        sampAddChatMessage("Введите: /getbl [id / nick]", 0x00FA9A)
-        return
+    dependencyManager = newDependencyManager()
+    dependencyManager:registerCommands()
+    dependencyManager:bootstrap()
+    while not dependencyManager.ready do wait(100) end
+    if not ensureLibraries() then
+        while true do wait(1000) end -- Команды обслуживания работают даже при ошибке require.
     end
-    local id = tonumber(arg)
-    if id then
-        if sampIsPlayerConnected(id) then
-            arg = sampGetPlayerNickname(id)
-        else
-            sampAddChatMessage("Игрок оффлайн!", 0x00FA9A)
-            return
-        end
-    end
-    sampAddChatMessage("Загрузка данных...", 0x00FA9A)
-    asyncHttpRequest("GET",
-        "https://script.google.com/macros/s/AKfycbxwOW4H6tOcVXtQbwoEc8EzZEl9g1dEPJCUp6D1Fbjq0T6PVKoPv2qI48elNt6TU20txA/exec?nickname=" .. arg,
-        nil,
-        function(response)
-            local html = u8:decode(response.text)
-            local data = html:gmatch('userHtml\\x22:\\x22(.-)\\x22')()
-            if not data then
-                sampAddChatMessage(string.format("{ffffff}%s {00FA9A}в чёрном списке не обнаружен!", arg), 0x00FA9A)
-                return
-            end
-            local info = {}
-            for j in data:gmatch("([^,]+)") do info[#info + 1] = j end
-            if info[5] == "6" then info[5] = "Вынесен" end
-            sampAddChatMessage("--------------------------------------------------------------------------------------------", 0x00FA9A)
-            sampAddChatMessage(string.format("{00FA9A}Ник:{ffffff} %s | {00FA9A}Внёс:{ffffff} %s | {00FA9A}Дата: {ffffff}%s", info[2], info[1], info[4]), 0x00FA9A)
-            sampAddChatMessage(string.format("{00FA9A}Степень: {ffffff}%s | {00FA9A}Причина:{ffffff} %s", info[5], info[3]), 0x00FA9A)
-            sampAddChatMessage("--------------------------------------------------------------------------------------------", 0x00FA9A)
-        end,
-        function(err) print(err) end
-    )
-end
-
-function cmd_getpun(arg)
-    if #arg == 0 then
-        sampAddChatMessage("Введите: /getpun [id / nick]", 0x00FA9A)
-        return
-    end
-    local id = tonumber(arg)
-    if id then
-        if sampIsPlayerConnected(id) then
-            arg = sampGetPlayerNickname(id)
-        else
-            sampAddChatMessage("Игрок оффлайн!", 0x00FA9A)
-            return
-        end
-    end
-    sampAddChatMessage("Загрузка данных...", 0x00FA9A)
-    asyncHttpRequest("GET",
-        "https://script.google.com/macros/s/AKfycbyNToZlIqnWl7mqaW4FjjHIjzMAJVPQ0OKBHWvdtTok9xOV6pt3rHzb0HsDrTKbkbHj/exec?getpun_nick=" .. arg,
-        nil,
-        function(response)
-            if response.status_code ~= 200 and response.status_code ~= 302 then
-                sampAddChatMessage("Ошибка подключения! Код: " .. response.status_code, 0x00FA9A)
-                return
-            end
-            local clean = google_decode(response.text)
-            local raw_json = clean:match("<data>(.-)</data>") or clean:match("<data>(.-)<\\/data>")
-            if not raw_json then
-                sampAddChatMessage(string.format("{ffffff}%s {00FA9A}в реестре наказаний не обнаружен (или сбой парсинга)!", arg), 0x00FA9A)
-                return
-            end
-            raw_json = raw_json:gsub('\\"', '"')
-            local ok, jsonData = pcall(json.decode, raw_json)
-            if not ok then
-                sampAddChatMessage("Ошибка чтения JSON данных.", 0xFF0000)
-                print("JSON FAIL: " .. raw_json)
-                return
-            end
-            if #jsonData == 0 then
-                sampAddChatMessage(string.format("{ffffff}%s {00FA9A}в реестре наказаний не обнаружен!", arg), 0x00FA9A)
-                return
-            end
-            for _, item in ipairs(jsonData) do
-                local description = "Отсутствует"
-                if item.description and item.description ~= "" and item.description ~= json.null then
-                    description = u8:decode(item.description)
-                end
-                sampAddChatMessage("--------------------------------------------------------------------------------------------", 0x00FA9A)
-                sampAddChatMessage(string.format("{00FA9A}Ник:{ffffff} %s | {00FA9A}Выдал:{ffffff} %s | {00FA9A}Дата: {ffffff}%s",
-                    u8:decode(item.violator), u8:decode(item.author), u8:decode(item.date)), 0x00FA9A)
-                sampAddChatMessage(string.format("{00FA9A}Санкция: {ffffff}%s | {00FA9A}Причина:{ffffff} %s | {00FA9A}Описание:{ffffff} %s",
-                    u8:decode(item.sanction), u8:decode(item.reason), description), 0x00FA9A)
-                sampAddChatMessage("--------------------------------------------------------------------------------------------", 0x00FA9A)
-            end
-        end,
-        function(err)
-            print(err)
-            sampAddChatMessage("Критическая ошибка запроса.", 0xFF0000)
-        end
-    )
-end
-
-function cmd_getrank(args)
-    if #args == 0 then
-        sampAddChatMessage("Введите: /getrank [id / nick] (Количество записей max = 25)", 0x00FA9A)
-        return
-    end
-    local params, i = {}, 1
-    for arg in args:gmatch("[^%s]+") do params[i] = arg; i = i + 1 end
-    params[2] = tonumber(params[2]) or 5
-    if params[2] > 25 then
-        sampAddChatMessage("Максимум 25 записей", 0x00FA9A)
-        return
-    end
-    local id = tonumber(params[1])
-    if id then
-        if sampIsPlayerConnected(id) then
-            params[1] = sampGetPlayerNickname(id)
-        else
-            sampAddChatMessage("Игрок оффлайн!", 0x00FA9A)
-            return
-        end
-    end
-
-    local body = "draw=9&columns%5B0%5D%5Bdata%5D=0&columns%5B0%5D%5Bname%5D=&columns%5B0%5D%5Bsearchable%5D=true&columns%5B0%5D%5Borderable%5D=true&columns%5B0%5D%5Bsearch%5D%5Bvalue%5D=&columns%5B0%5D%5Bsearch%5D%5Bregex%5D=false&columns%5B1%5D%5Bdata%5D=1&columns%5B1%5D%5Bname%5D=&columns%5B1%5D%5Bsearchable%5D=true&columns%5B1%5D%5Borderable%5D=true&columns%5B1%5D%5Bsearch%5D%5Bvalue%5D=&columns%5B1%5D%5Bsearch%5D%5Bregex%5D=false&columns%5B2%5D%5Bdata%5D=2&columns%5B2%5D%5Bname%5D=&columns%5B2%5D%5Bsearchable%5D=true&columns%5B2%5D%5Borderable%5D=true&columns%5B2%5D%5Bsearch%5D%5Bvalue%5D=&columns%5B2%5D%5Bsearch%5D%5Bregex%5D=false&columns%5B3%5D%5Bdata%5D=3&columns%5B3%5D%5Bname%5D=&columns%5B3%5D%5Bsearchable%5D=true&columns%5B3%5D%5Borderable%5D=true&columns%5B3%5D%5Bsearch%5D%5Bvalue%5D=&columns%5B3%5D%5Bsearch%5D%5Bregex%5D=false&columns%5B4%5D%5Bdata%5D=4&columns%5B4%5D%5Bname%5D=&columns%5B4%5D%5Bsearchable%5D=true&columns%5B4%5D%5Borderable%5D=true&columns%5B4%5D%5Bsearch%5D%5Bvalue%5D=&columns%5B4%5D%5Bsearch%5D%5Bregex%5D=false&columns%5B5%5D%5Bdata%5D=5&columns%5B5%5D%5Bname%5D=&columns%5B5%5D%5Bsearchable%5D=true&columns%5B5%5D%5Borderable%5D=true&columns%5B5%5D%5Bsearch%5D%5Bvalue%5D=&columns%5B5%5D%5Bsearch%5D%5Bregex%5D=false&columns%5B6%5D%5Bdata%5D=6&columns%5B6%5D%5Bname%5D=&columns%5B6%5D%5Bsearchable%5D=true&columns%5B6%5D%5Borderable%5D=true&columns%5B6%5D%5Bsearch%5D%5Bvalue%5D=&columns%5B6%5D%5Bsearch%5D%5Bregex%5D=false&columns%5B7%5D%5Bdata%5D=7&columns%5B7%5D%5Bname%5D=&columns%5B7%5D%5Bsearchable%5D=true&columns%5B7%5D%5Borderable%5D=true&columns%5B7%5D%5Bsearch%5D%5Bvalue%5D=&columns%5B7%5D%5Bsearch%5D%5Bregex%5D=false&order%5B0%5D%5Bcolumn%5D=7&order%5B0%5D%5Bdir%5D=desc&start=0&length=25&search%5Bvalue%5D=" .. params[1] .. "&search%5Bregex%5D=false&fraction=3"
-
-    local headers = {
-        ["X-KL-Ajax-Request"] = "Ajax_Request",
-        ["User-Agent"]        = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
-        ["Content-Type"]      = "application/x-www-form-urlencoded; charset=UTF-8",
-        ["Accept"]            = "application/json, text/javascript, */*; q=0.01",
-        ["Referer"]           = "https://logs.evolve-rp.ru/saint-louis",
-        ["Origin"]            = "https://logs.evolve-rp.ru",
-        ["X-Requested-With"]  = "XMLHttpRequest",
-        data = body,
+    if ENABLE_AUTOUPDATE then checkForUpdates() end
+    local commands = {
+        getbl = cmdGetBl, getpun = cmdGetPun, getrank = cmdGetRank,
+        invite = cmdInvite, checkcontract = cmdCheckContract,
+        contracts = cmdContracts, acccontract = cmdAccContract,
     }
-
-    sampAddChatMessage("Загрузка данных...", 0x00FA9A)
-    doPostRequest(params, headers)
-end
-
-function cmd_invite(args)
-    if #args == 0 then
-        sampAddChatMessage("Введите: /invite [id] [1 - принять без проверки на ЧС]", 0x00FA9A)
-        return
+    for name, callback in pairs(commands) do
+        pcall(sampUnregisterChatCommand, name)
+        sampRegisterChatCommand(name, callback)
     end
-    local params, i = {}, 1
-    for arg in args:gmatch("[^%s]+") do params[i] = arg; i = i + 1 end
-    params[2] = tonumber(params[2])
-    if params[2] == 1 then
-        sampSendChat("/invite " .. params[1])
-        return
-    end
-    local id = tonumber(params[1])
-    if id then
-        if sampIsPlayerConnected(id) then
-            params[1] = sampGetPlayerNickname(id)
-        else
-            sampAddChatMessage("Игрок оффлайн!", 0x00FA9A)
-            return
-        end
-    end
-    sampAddChatMessage("Загрузка данных...", 0x00FA9A)
-    asyncHttpRequest("GET",
-        "https://script.google.com/macros/s/AKfycbxwOW4H6tOcVXtQbwoEc8EzZEl9g1dEPJCUp6D1Fbjq0T6PVKoPv2qI48elNt6TU20txA/exec?nickname=" .. params[1],
-        nil,
-        function(response)
-            local html = u8:decode(response.text)
-            local data = html:gmatch('userHtml\\x22:\\x22(.-)\\x22')()
-            if not data then
-                sampSendChat("/invite " .. id)
-                return
-            end
-            local info = {}
-            for j in data:gmatch("([^,]+)") do info[#info + 1] = j end
-            if info[5] == "6" then
-                sampSendChat("/invite " .. id)
-                return
-            end
-            sampAddChatMessage("--------------------------------------------------------------------------------------------", 0x00FA9A)
-            sampAddChatMessage(string.format("{00FA9A}Ник:{ffffff} %s | {00FA9A}Внёс:{ffffff} %s | {00FA9A}Дата: {ffffff}%s", info[2], info[1], info[4]), 0x00FA9A)
-            sampAddChatMessage(string.format("{00FA9A}Степень: {ffffff}%s | {00FA9A}Причина:{ffffff} %s", info[5], info[3]), 0x00FA9A)
-            sampAddChatMessage("--------------------------------------------------------------------------------------------", 0x00FA9A)
-        end,
-        function(err) print(err) end
-    )
-end
-
-function cmd_checkcontract(arg)
-    if #arg == 0 then
-        sampAddChatMessage("Введите: /checkcontract [id / nick]", 0x00FA9A)
-        return
-    end
-    local id = tonumber(arg)
-    if id then
-        if sampIsPlayerConnected(id) then
-            arg = sampGetPlayerNickname(id)
-        else
-            sampAddChatMessage("Игрок оффлайн!", 0x00FA9A)
-            return
-        end
-    end
-    sampAddChatMessage("Загрузка данных...", 0x00FA9A)
-    asyncHttpRequest("GET",
-        "https://script.google.com/macros/s/AKfycbxB7WwPsPpYHO5aPRdbrsrNuX2pZtS1s4GX8raft68PAX7BcKDee1GqVxUYCH2FrgiQ/exec?nickname=" .. arg,
-        nil,
-        function(response)
-            local html = u8:decode(response.text)
-            local data = html:gmatch('userHtml\\x22:\\x22(.-)\\x22')()
-            sampAddChatMessage(data, 0x00FA9A)
-        end,
-        function(err) print(err) end
-    )
-end
-
-function cmd_contracts()
-    sampAddChatMessage("Загрузка данных...", 0x00FA9A)
-    asyncHttpRequest("GET",
-        "https://script.google.com/macros/s/AKfycbxB7WwPsPpYHO5aPRdbrsrNuX2pZtS1s4GX8raft68PAX7BcKDee1GqVxUYCH2FrgiQ/exec",
-        nil,
-        function(response)
-            local html = u8:decode(response.text)
-            local data = html:gmatch('userHtml\\x22:\\x22(.-)\\x22')()
-            local found = false
-            for nick in data:gmatch("([^,]+)") do
-                local pid = sampGetPlayerIdByNickname(nick)
-                if pid then
-                    sampAddChatMessage(string.format("%s [%s]", nick, pid), 0x00FA9A)
-                    found = true
-                end
-            end
-            if not found then sampAddChatMessage("Список пуст", 0x00FA9A) end
-        end,
-        function(err) print(err) end
-    )
-end
-
-function cmd_acccontract(arg)
-    if #arg == 0 then
-        sampAddChatMessage("Введите: /acccontract [id / nick]", 0x00FA9A)
-        return
-    end
-    local _, myid = sampGetPlayerIdByCharHandle(PLAYER_PED)
-    local mynick  = sampGetPlayerNickname(myid)
-    local id = tonumber(arg)
-    if id then
-        if sampIsPlayerConnected(id) then
-            arg = sampGetPlayerNickname(id)
-        else
-            sampAddChatMessage("Игрок оффлайн!", 0x00FA9A)
-            return
-        end
-    end
-    sampAddChatMessage("Загрузка данных...", 0x00FA9A)
-    asyncHttpRequest("GET",
-        "https://script.google.com/macros/s/AKfycbxB7WwPsPpYHO5aPRdbrsrNuX2pZtS1s4GX8raft68PAX7BcKDee1GqVxUYCH2FrgiQ/exec?nickname=" .. arg .. "&staff=" .. mynick,
-        nil,
-        function(response)
-            local html = u8:decode(response.text)
-            local data = html:gmatch('userHtml\\x22:\\x22(.-)\\x22')()
-            sampAddChatMessage(data, 0x00FA9A)
-        end,
-        function(err) print(err) end
-    )
-end
-
-function sampGetPlayerIdByNickname(nick)
-    nick = tostring(nick)
-    local _, myid = sampGetPlayerIdByCharHandle(PLAYER_PED)
-    if nick == sampGetPlayerNickname(myid) then return myid end
-    for i = 0, 1003 do
-        if sampIsPlayerConnected(i) and sampGetPlayerNickname(i) == nick then
-            return i
-        end
+    chat("checklogs by Leo_Markin v" .. SCRIPT_VERSION .. " loaded. {FFFFFF}/logshelp{00FA9A} - список команд")
+    print("checklogs by Leo_Markin v" .. SCRIPT_VERSION .. " loaded.")
+    while true do
+        pollHttpRequests()
+        wait(#pendingRequests > 0 and 0 or 50)
     end
 end
 
-function cmd_logshelp()
-    sampShowDialog(1337, "{00FA9A}checklogs help",
-        "{00FA9A}/getbl [id/nick]{FFFFFF} - Проверить игрока в ЧС SFA\n" ..
-        "{00FA9A}/getpun [id/nick]{FFFFFF} - Проверить реестр наказаний\n" ..
-        "{00FA9A}/getrank [id/nick] [кол-во]{FFFFFF} - Логи повышений/понижений (посл. 25)\n" ..
-        "{00FA9A}/invite [id] [1]{FFFFFF} - Принять во фракцию с проверкой на ЧС; [1] - без проверки\n" ..
-        "{00FA9A}/checkcontract [id/nick]{FFFFFF} - Проверить наличие одобренного контракта\n" ..
-        "{00FA9A}/contracts{FFFFFF} - Список непринятых контрактников онлайн\n" ..
-        "{00FA9A}/acccontract [id/nick]{FFFFFF} - Проставить принятие контрактника в таблице",
-        "Закрыть", "", 0)
+function onScriptTerminate(script)
+    if script ~= thisScript() then return end
+    if registryView.close then registryView.close() end
+    if registryView.subscription then registryView.subscription:Unsubscribe() end
+    for _, request in ipairs(pendingRequests) do
+        pcall(request.runner.cancel, request.runner)
+    end
 end
