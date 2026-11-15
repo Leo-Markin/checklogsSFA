@@ -1,4 +1,4 @@
-local SCRIPT_VERSION = "17"
+local SCRIPT_VERSION = "18"
 
 script_name("checklogs")
 script_version(SCRIPT_VERSION)
@@ -1353,14 +1353,16 @@ end
 
 -- Встроенный checkerplayers. Работает только с живым соединением Evolve 01.
 local playersChecker = {busy = false, generation = 0,
-    nextAttempt = 0, lastMinute = -1, server = nil}
+    nextAttempt = 0, lastMinute = -1, server = nil,
+    connectionBlocked = false, awaitingInit = false}
 
 local function playersConnection()
-    if not isSampAvailable() or sampGetGamestate() ~= 3 then return nil end
+    if playersChecker.connectionBlocked or not isSampAvailable() or sampGetGamestate() ~= 3 then return nil end
     local ip, port = sampGetCurrentServerAddress()
     if tonumber(port) ~= PLAYERS_PORT or (ip ~= PLAYERS_SERVER and ip ~= PLAYERS_DOMAIN) then return nil end
     local found, id = sampGetPlayerIdByCharHandle(PLAYER_PED)
-    -- Gamestate checks the connection; sampIsPlayerConnected is unreliable for the local player.
+    -- Gamestate/address/ID can stay cached after a kick; packet events take precedence.
+    -- sampIsPlayerConnected is unreliable for the local player.
     if not found or type(id) ~= "number" or id < 0 or id > MAX_PLAYER_ID then return nil end
     return ip .. ":" .. tostring(port), id
 end
@@ -1375,6 +1377,43 @@ local function stopPlayersChecker()
             pcall(pendingRequests[i].runner.cancel, pendingRequests[i].runner)
             table.remove(pendingRequests, i)
         end
+    end
+end
+
+-- MoonLoader/SAMPFUNCS hooks: observe only, never block or rewrite network traffic.
+local connectionEndPackets = {
+    [29] = true, -- CONNECTION_ATTEMPT_FAILED
+    [31] = true, -- NO_FREE_INCOMING_CONNECTIONS
+    [32] = true, -- DISCONNECTION_NOTIFICATION (kick/server closed connection)
+    [33] = true, -- CONNECTION_LOST
+    [36] = true, -- CONNECTION_BANNED
+    [37] = true, -- INVALID_PASSWORD
+}
+
+local function pausePlayersConnection(awaitingInit)
+    playersChecker.connectionBlocked = true
+    playersChecker.awaitingInit = awaitingInit == true
+    stopPlayersChecker()
+end
+
+function onReceivePacket(id)
+    if connectionEndPackets[id] then
+        pausePlayersConnection(false)
+    elseif id == 34 then -- CONNECTION_REQUEST_ACCEPTED: wait for SA-MP InitGame.
+        pausePlayersConnection(true)
+    end
+end
+
+function onSendPacket(id)
+    if id == 32 then pausePlayersConnection(false) end -- Local disconnect.
+end
+
+function onReceiveRpc(id)
+    if id == 40 then -- SCRGAMEMODERESTART: same transport, new game session.
+        pausePlayersConnection(true)
+    elseif id == 139 and playersChecker.awaitingInit then -- SCRINITGAME
+        playersChecker.awaitingInit = false
+        playersChecker.connectionBlocked = false
     end
 end
 
@@ -1435,6 +1474,7 @@ local function pollPlayersChecker()
     if playersToken() == "" or playersChecker.busy or os.time() < playersChecker.nextAttempt then return end
     local minute = math.floor(os.time() / 60)
     if minute == playersChecker.lastMinute then return end
+    local generation = playersChecker.generation
     local players, seen = {}, {}
     local function add(id)
         local nick = sampGetPlayerNickname(id)
@@ -1447,7 +1487,10 @@ local function pollPlayersChecker()
         if sampIsPlayerConnected(id) then add(id) end
     end
     -- Проверяем соединение ещё раз после сбора; пустой список после дисконнекта не отправляем.
-    if server ~= playersConnection() or #players == 0 then stopPlayersChecker(); return end
+    if generation ~= playersChecker.generation or server ~= playersConnection() or #players == 0 then
+        stopPlayersChecker()
+        return
+    end
     playersChecker.lastMinute, playersChecker.nextAttempt = minute, 0
     playersRequest(players)
 end
