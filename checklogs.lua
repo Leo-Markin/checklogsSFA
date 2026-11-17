@@ -1,4 +1,4 @@
-local SCRIPT_VERSION = "18"
+local SCRIPT_VERSION = "19"
 
 script_name("checklogs")
 script_version(SCRIPT_VERSION)
@@ -1295,6 +1295,17 @@ local function httpWorkerBody(method, url, args)
     if ok then return true, status, text end
     return false, tostring(status)
 end
+-- Windows uptime: unaffected by the system date/time, including changes while a request is pending.
+local monotonicClock
+local function monotonicMs()
+    if not monotonicClock then
+        local ffi = require "ffi"
+        ffi.cdef [[ uint64_t __stdcall GetTickCount64(void); ]]
+        local kernel = ffi.load("kernel32")
+        monotonicClock = function() return tonumber(kernel.GetTickCount64()) end
+    end
+    return monotonicClock()
+end
 local pendingRequests = {}
 local pendingCallbacks = {}
 
@@ -1315,7 +1326,7 @@ local function asyncHttpRequest(method, url, args, resolve, reject)
         runner = runner,
         resolve = resolve,
         reject = reject,
-        deadline = os.time() + HTTP_DEADLINE,
+        deadlineMs = monotonicMs() + HTTP_DEADLINE * 1000,
     }
     pendingRequests[#pendingRequests + 1] = request
     return request
@@ -1335,7 +1346,7 @@ local function pollHttpRequests()
             end
         elseif err or status == "failed" or status == "canceled" then
             queueCallback(request.reject, err or status)
-        elseif os.time() >= request.deadline then
+        elseif monotonicMs() >= request.deadlineMs then
             request.runner:cancel()
             queueCallback(request.reject, "Превышено время ожидания HTTP-запроса")
         else
@@ -1354,7 +1365,48 @@ end
 -- Встроенный checkerplayers. Работает только с живым соединением Evolve 01.
 local playersChecker = {busy = false, generation = 0,
     nextAttempt = 0, lastMinute = -1, server = nil,
-    connectionBlocked = false, awaitingInit = false}
+    connectionBlocked = false, awaitingInit = false, nextReportAt = 0, phaseMs = 30000}
+
+local function playersServerMs(mono)
+    if playersChecker.serverMs then
+        return playersChecker.serverMs + mono - playersChecker.serverMonoMs
+    end
+end
+
+local function schedulePlayersReport(mono)
+    local serverMs = playersServerMs(mono)
+    if not serverMs then return end -- Old GAS: keep the 60-second monotonic fallback.
+    local minute = math.floor(serverMs / 60000)
+    local target = minute * 60000 + playersChecker.phaseMs
+    if target <= serverMs then minute = minute + 1 end
+    minute = math.max(minute, playersChecker.lastMinute + 1)
+    target = minute * 60000 + playersChecker.phaseMs
+    playersChecker.nextReportAt = mono + target - serverMs
+end
+
+local function playersClockReceipt(value, sentMono, receivedMono)
+    local function integer(number, low, high)
+        return type(number) == "number" and number >= low and number <= high and number % 1 == 0
+    end
+    if type(value) ~= "table" or value.schema ~= 1
+        or not integer(value.entry_ms, 0, 9007199254740991)
+        or not integer(value.reply_ms, value.entry_ms, 9007199254740991)
+        or not integer(value.phase_ms, 20000, 40000) then return false end
+    local rtt = receivedMono - sentMono
+    local processing = value.reply_ms - value.entry_ms
+    if rtt < 0 or processing > rtt + 250 then return false end
+    -- The server's own processing time is not network latency. ContentService redirects
+    -- and callback/frame delays are included in this conservative uncertainty estimate.
+    local network = math.max(0, rtt - processing)
+    playersChecker.lastMinute = math.max(playersChecker.lastMinute, math.floor(value.entry_ms / 60000))
+    if network > 10000 then return false end
+    if playersChecker.serverMs and network > playersChecker.clockDelayMs + 1000
+        and receivedMono - playersChecker.serverMonoMs < 300000 then return false end
+    playersChecker.serverMs = value.reply_ms + network / 2
+    playersChecker.serverMonoMs, playersChecker.clockDelayMs = receivedMono, network
+    playersChecker.phaseMs = value.phase_ms
+    return true
+end
 
 local function playersConnection()
     if playersChecker.connectionBlocked or not isSampAvailable() or sampGetGamestate() ~= 3 then return nil end
@@ -1371,6 +1423,8 @@ local function stopPlayersChecker()
     playersChecker.generation = playersChecker.generation + 1
     playersChecker.busy = false
     playersChecker.server, playersChecker.lastMinute = nil, -1
+    playersChecker.nextReportAt = 0
+    playersChecker.serverMs, playersChecker.serverMonoMs, playersChecker.clockDelayMs = nil, nil, nil
     -- Уже запущенный запрос отменяется; его callback не может оживить старую сессию.
     for i = #pendingRequests, 1, -1 do
         if pendingRequests[i].playersChecker then
@@ -1428,9 +1482,12 @@ local function playersRequest(players)
     if not token:match("^[a-f0-9]+$") or #token ~= 64 then return end
     local generation = playersChecker.generation
     -- Токен обязателен в каждом отчёте. Адрес/состояние сервера остаются только в Lua.
-    local payload = {token = token, players = players}
+    local payload = {token = token, players = players, clock = 1}
+    local sentMono = monotonicMs()
     playersChecker.busy = true
-    playersChecker.nextAttempt = os.time() + 60
+    playersChecker.nextAttempt = sentMono + 60000
+    playersChecker.nextReportAt = sentMono + 60000
+    schedulePlayersReport(sentMono)
     local function current()
         return generation == playersChecker.generation and server == playersConnection() and token == playersToken()
     end
@@ -1454,8 +1511,14 @@ local function playersRequest(players)
             end
             return
         end
-        -- GAS проверил токен этого отчёта; отдельной сессии авторизации нет.
-        -- Следующий сбор привязан к границе минуты, не к задержке HTTP.
+        local receivedMono = monotonicMs()
+        if not playersClockReceipt(result.clock, sentMono, receivedMono) and not playersChecker.serverMs
+            and not playersChecker.clockWarning then
+            playersChecker.clockWarning = true
+            print("[checklogs] Server clock unavailable; synchronization will retry on the next report.")
+        end
+        schedulePlayersReport(receivedMono)
+        -- No preflight authorization/time query, no telemetry or local date transmitted.
         playersChecker.nextAttempt = 0
     end, failed)
     if request then request.playersChecker = true end
@@ -1471,9 +1534,19 @@ local function pollPlayersChecker()
         stopPlayersChecker()
         playersChecker.server, playersChecker.nextAttempt = server, 0
     end
-    if playersToken() == "" or playersChecker.busy or os.time() < playersChecker.nextAttempt then return end
-    local minute = math.floor(os.time() / 60)
-    if minute == playersChecker.lastMinute then return end
+    local mono = monotonicMs()
+    if playersToken() == "" or playersChecker.busy or mono < playersChecker.nextAttempt
+        or mono < playersChecker.nextReportAt then return end
+    local serverMs = playersServerMs(mono)
+    local minute = serverMs and math.floor(serverMs / 60000) or -1
+    if serverMs then
+        local phase = serverMs % 60000
+        if minute <= playersChecker.lastMinute or phase < 10000 or phase > 50000 then
+            -- After a pause, skip expired slots instead of sending a burst or sampling at a boundary.
+            schedulePlayersReport(mono)
+            return
+        end
+    end
     local generation = playersChecker.generation
     local players, seen = {}, {}
     local function add(id)
